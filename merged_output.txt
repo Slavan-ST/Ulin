@@ -1,0 +1,2170 @@
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/conf.lua ====
+
+function love.conf(t)
+    t.window.title = "Diabloid"
+    t.window.width = 1280
+    t.window.height = 720
+    t.console = true
+end
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/conf.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/main.lua ====
+
+
+local loader = require("src.core.loader")
+local DebugLog = require("src.utils.debuglog")
+local Fonts = require("src.ui.fonts.init")
+local DebugConsole = require("src.ui.DebugConsole")
+
+
+local useTestUI = true
+
+local MTestUI = require("src.ui.testui")
+local TestUI = MTestUI:new()
+
+function love.load()
+    DebugLog.init()
+    DebugConsole.printLog("System initialized")
+    
+    Fonts.load()
+    love.graphics.setFont(Fonts.default)
+
+    if useTestUI then
+        
+        TestUI.load()
+    else
+        loader.load()
+    end
+end
+
+function love.update(dt)
+    DebugConsole.update(dt)
+    if useTestUI then
+        TestUI:update(dt)
+    else
+        loader.update(dt)
+    end
+end
+
+function love.draw()
+    if useTestUI then
+        TestUI:draw()
+    else
+        loader.draw()
+    end
+    DebugConsole.draw()
+end
+
+function love.touchpressed(id, x, y, dx, dy, pressure)
+    if DebugConsole.processTouchPress(id, x, y) then return end
+    
+    if useTestUI then
+        TestUI:touchpressed(id, x, y, dx, dy, pressure)
+    else
+        loader.touchpressed(id, x, y, dx, dy, pressure)
+    end
+end
+
+function love.touchmoved(id, x, y, dx, dy, pressure)
+    --console:processTouchMove(id, x, y, dx, dy, pressure)
+    
+    if useTestUI then
+        print ""
+        --TestUItouchmoved(id, x, y, dx, dy, pressure)
+    else
+        loader.touchmoved(id, x, y, dx, dy, pressure)
+    end
+end
+
+function love.touchreleased(id, x, y, dx, dy, pressure)
+    --console:processTouchRelease(id, x, y, dx, dy, pressure)
+    
+    if useTestUI then
+        print ""
+        --TestUItouchreleased(id, x, y, dx, dy, pressure)
+    else
+        loader.touchreleased(id, x, y, dx, dy, pressure)
+    end
+end
+
+function love.textinput(text)
+    if not DebugConsole.processTextInput(text) then
+        if useTestUI then
+            TestUI:textinput(text)
+        else
+            loader.textinput(text)
+        end
+    end
+end
+
+function love.keypressed(key)
+    if not DebugConsole.processKeyPress(key) then
+        if useTestUI then
+            TestUI:keypressed(key)
+        else
+            loader.keypressed(key)
+        end
+    end
+end
+
+
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/main.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/core/Inventory.lua ====
+
+local Inventory = {}
+local DebugLog = require("src.utils.debuglog")
+Inventory.__index = Inventory
+
+function Inventory:new()
+    return setmetatable({ items = {} }, Inventory)
+end
+
+function Inventory:add(item)
+    table.insert(self.items, item)
+    DebugLog.print("Added to inventory: " .. item.name)
+end
+
+function Inventory:draw()
+    for i, item in ipairs(self.items) do
+        love.graphics.print(item.name, 10, i * 16)
+    end
+end
+
+return Inventory
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/core/Inventory.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/core/ObjectManager.lua ====
+
+local ObjectManager = {}
+local DebugLog = require("src.utils.debuglog")
+ObjectManager.__index = ObjectManager
+
+local Item = require("src.objects.items.Item")
+
+
+
+function ObjectManager:new()
+    return setmetatable({ objects = {} }, self)
+end
+
+function ObjectManager:add(obj)
+    table.insert(self.objects, obj)
+end
+
+function ObjectManager:update(dt, player)
+    for i = #self.objects, 1, -1 do
+        local obj = self.objects[i]
+
+        if obj.isInstanceOf and obj:isInstanceOf(Item) then
+            obj:update(dt, player)
+        end
+
+        if obj.picked then
+            table.remove(self.objects, i)
+        end
+    end
+end
+
+function ObjectManager:draw()
+    for _, obj in ipairs(self.objects) do
+        if obj.draw then
+            obj:draw()
+        end
+    end
+end
+
+-- В src/core/ObjectManager.lua:
+
+function ObjectManager:getAll(filterType)
+    if not filterType then return self.objects end
+    
+    local filtered = {}
+    for _, obj in ipairs(self.objects) do
+        if obj.class and obj.class.name == filterType then
+            table.insert(filtered, obj)
+        end
+    end
+    return filtered
+end
+
+function ObjectManager:getNearby(x, y, radius, filterType)
+    local result = {}
+    for _, obj in ipairs(self:getAll(filterType)) do
+        local ox, oy = obj.body and obj.body:getPosition() or obj.x, obj.y
+        local dist = math.sqrt((ox - x)^2 + (oy - y)^2)
+        if dist <= radius then
+            table.insert(result, obj)
+        end
+    end
+    return result
+end
+
+return ObjectManager
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/core/ObjectManager.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/core/SpawnManager.lua ====
+
+-- src/core/SpawnManager.lua
+local SpawnManager = {}
+local DebugLog = require("src.utils.debuglog")
+
+function SpawnManager:new(world, objectManager)
+    return setmetatable({
+        world = world,
+        objectManager = objectManager,
+        spawnAreas = {},
+        spawnTimer = 0,
+        spawnInterval = 5, -- Спавн каждые 5 секунд (для теста)
+    }, {__index = SpawnManager})
+end
+
+-- Основные методы спавна
+function SpawnManager:spawnMob(x, y)
+    local Mob = require("src.objects.active.Mob")
+    local mob = Mob:new(self.world, x or math.random(300, 500), y or math.random(200, 400))
+    self.objectManager:add(mob)
+    
+    return mob
+end
+
+function SpawnManager:spawnItem(itemType, x, y)
+    local Item = require("src.objects.items.Item")
+    local item = Item:new(x or math.random(100, 700), y or math.random(100, 500), itemType)
+    self.objectManager:add(item)
+    return item
+end
+
+function SpawnManager:spawnPlayer(x, y)
+    local Player = require("src.objects.active.Player")
+    local player = Player:new(self.world, x, y)
+    self.objectManager:add(player)
+    DebugLog.print("Spawned player at "..x..","..y)
+    return player
+end
+
+function SpawnManager:spawnInitial()
+    -- Пример базовых сущностей (можно кастомизировать)
+    -- Стены
+    local Wall = require("src.objects.static.Wall")
+    self.objectManager:add(Wall:new(self.world, 200, 100, 50, 200))
+    self.objectManager:add(Wall:new(self.world, 400, 300, 150, 30))
+
+    -- Мобы
+    self:spawnMob(350, 250)
+    self:spawnMob(500, 300)
+
+    -- Предметы
+    self:spawnItem("heal", 250, 150)
+    self:spawnItem("shield", 450, 200)
+
+    DebugLog.print("Initial spawn complete.")
+end
+
+-- Обновление (для периодического спавна)
+function SpawnManager:update(dt)
+    self.spawnTimer = self.spawnTimer + dt
+    if self.spawnTimer >= self.spawnInterval then
+        self:spawnMob() -- Спавним случайного моба
+        self.spawnTimer = 0
+    end
+end
+
+return SpawnManager
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/core/SpawnManager.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/core/Stats.lua ====
+
+-- src/core/Stats.lua
+local Stats = {}
+Stats.__index = Stats
+
+function Stats:new(maxHealth)
+    return setmetatable({
+        maxHealth = maxHealth or 100,
+        health = maxHealth or 100,
+        isAlive = true
+    }, Stats)
+end
+
+function Stats:takeDamage(amount)
+    self.health = math.max(0, self.health - amount)
+    self.isAlive = self.health > 0
+    return self.isAlive
+end
+
+function Stats:heal(amount)
+    self.health = math.min(self.maxHealth, self.health + amount)
+end
+
+return Stats
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/core/Stats.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/core/camera.lua ====
+
+local Camera = require("lib.hump.camera")
+local DebugLog = require("src.utils.debuglog")
+local cam = Camera(0, 0)
+
+function cam:setTarget(target)
+    self.target = target
+end
+
+function cam:update(dt)
+    if self.target and self.target.body then
+        local x, y = self.target.body:getPosition()
+        self:lookAt(x, y)
+    end
+end
+
+-- Конвертация координат экрана в координаты мира
+function cam:screenToWorld(sx, sy)
+    local camX, camY = self:position()
+    local scale = self.scale or 1
+
+    local screenW, screenH = love.graphics.getWidth(), love.graphics.getHeight()
+
+    local worldX = (sx - screenW / 2) / scale + camX
+    local worldY = (sy - screenH / 2) / scale + camY
+    
+    return worldX, worldY
+end
+
+-- Конвертация координат мира в экранные координаты (по желанию)
+function cam:worldToScreen(wx, wy)
+    local camX, camY = self:position()
+    local scale = self.scale or 1
+
+    local screenW, screenH = love.graphics.getWidth(), love.graphics.getHeight()
+
+    local screenX = (wx - camX) * scale + screenW / 2
+    local screenY = (wy - camY) * scale + screenH / 2
+    
+    return screenX, screenY
+end
+
+return cam
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/core/camera.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/core/game.lua ====
+
+local Game = {}
+
+local Camera = require("src.core.camera")
+local Joystick = require("src.ui.joystick")
+local DebugLog = require("src.utils.debuglog")
+local Wall = require("src.objects.static.Wall")
+local Player = require("src.objects.active.Player")
+local Item = require("src.objects.items.Item")
+local ObjectManager = require("src.core.ObjectManager")
+local SpawnManager = require("src.core.SpawnManager")
+local Mob = require("src.objects.active.Mob")
+
+
+-- В src/core/game.lua:
+
+
+
+function Game:load()
+    -- === ФИЗИЧЕСКИЙ МИР ===
+    self.world = love.physics.newWorld(0, 0, true)
+
+    -- === МЕНЕДЖЕРЫ ===
+    self.objects = ObjectManager:new()
+    self.spawnManager = SpawnManager:new(self.world, self.objects)
+
+    -- === ИГРОК ===
+    self.player = self.spawnManager:spawnPlayer(100, 100)
+    self.player.lastDamageTime = 0
+
+    -- === СТАРТОВАЯ ИНИЦИАЛИЗАЦИЯ СПАВНА ===
+    self.spawnManager:spawnInitial()
+
+    -- === КАМЕРА ===
+    Camera:setTarget(self.player)
+
+    -- === ИНТЕРФЕЙС ===
+    Joystick:init()
+    
+    -- В Game:load()
+    local CommandSystem = require("src.utils.CommandSystem")
+    self.commandSystem = CommandSystem:new(self.world, self.player, self.objects, self.spawnManager)
+
+    DebugLog.print("Game initialized.")
+end
+
+function Game:update(dt)
+    self.world:update(dt)
+    Joystick:update(dt)
+    
+    -- Обновляем игрока
+    self.player:update(dt, Joystick:getDirection())
+    -- Обновляем все объекты через менеджер
+    self.objects:update(dt, self.player)
+        -- Обновляем менеджер спавна
+    self.spawnManager:update(dt)
+    
+
+    Camera:update(dt)
+end
+
+function Game:draw()
+    Camera:attach()
+
+    -- Отрисовываем все объекты через менеджер
+    self.objects:draw()
+
+    self.player:draw()
+
+    Camera:detach()
+
+    Joystick:draw()
+    --DebugLog.draw()
+end
+
+function Game:touchpressed(id, x, y, dx, dy, pressure)
+    
+    -- Если касание внутри области DebugLog — приоритет
+    if DebugLog.isTouchInside(x, y) then
+        DebugLog.touchpressed(id, x, y)  -- Передаем все три параметра
+        return
+    end
+
+    -- В остальных случаях — обычная обработка
+    Joystick.touchpressed(id, x, y)
+
+    -- Конвертация координат касания в мировые
+    local wx, wy = Camera:screenToWorld(x, y)
+
+    -- Проверка касания интерактивных объектов
+    for _, obj in ipairs(self.objects.objects) do
+        if obj.onTouch and obj.shape and obj.body then
+            local bx, by = obj.body:getPosition()
+            local angle = obj.body:getAngle()
+
+            local success, isPointInside = pcall(function()
+                return obj.shape:testPoint(bx, by, angle, wx, wy)
+            end)
+
+            if success and isPointInside then
+                obj:onTouch()
+            end
+        end
+    end
+end
+
+function Game:touchmoved(id, x, y, dx, dy, pressure)
+    if DebugLog.isTouchInside(x, y) then
+        DebugLog.touchmoved(id, x, y, dx, dy)  -- Передаем все параметры
+    else
+        Joystick.touchmoved(id, x, y)
+    end
+end
+
+function Game:touchreleased(id, x, y, dx, dy, pressure)
+    if DebugLog.isTouchInside(x, y) then
+        DebugLog.touchreleased(id, x, y)  -- Передаем все три параметра
+    else
+        Joystick.touchreleased(id, x, y)
+    end
+end
+
+function Game.textinput(t)
+    DebugLog.textinput(t)
+end
+
+function Game.keypressed(key)
+    DebugLog.keypressed(key)
+end
+
+
+return Game
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/core/game.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/core/loader.lua ====
+
+local loader = {}
+
+local DebugLog = require("src.utils.debuglog")
+local Game = require("src.core.game")
+
+function loader.load()
+    Game:load()
+end
+
+function loader.update(dt)
+    Game:update(dt)
+end
+
+function loader.draw()
+    Game:draw()
+end
+
+function loader.touchpressed(id, x, y, dx, dy, pressure)
+    Game:touchpressed(id, x, y, dx, dy, pressure)
+end
+
+function loader.touchmoved(id, x, y, dx, dy, pressure)
+    Game:touchmoved(id, x, y, dx, dy, pressure)
+end
+
+function loader.touchreleased(id, x, y, dx, dy, pressure)
+    Game:touchreleased(id, x, y, dx, dy, pressure)
+end
+
+function loader.textinput(t)
+    Game.textinput(t)
+end
+
+function loader.keypressed(key)
+    Game.keypressed(key)
+end
+
+return loader
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/core/loader.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/objects/GameObject.lua ====
+
+local class = require("lib.middleclass")
+
+local GameObject = class("GameObject")
+
+function GameObject:initialize(world, x, y)
+    self.world = world
+    self.x = x or 0
+    self.y = y or 0
+end
+
+function GameObject:update(dt)
+    -- Переопределяется потомками при необходимости
+end
+
+function GameObject:draw()
+    -- Переопределяется потомками
+end
+
+return GameObject
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/objects/GameObject.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/objects/active/ActiveObject.lua ====
+
+local class = require("lib.middleclass")
+local GameObject = require("src.objects.GameObject")
+
+local ActiveObject = class("ActiveObject", GameObject)
+
+function ActiveObject:initialize(world, x, y, radius)
+    GameObject.initialize(self, world, x, y)
+
+    self.radius = radius or 16
+    self.speed = 100
+
+    self.body = love.physics.newBody(world, x, y, "dynamic")
+    self.shape = love.physics.newCircleShape(self.radius)
+    self.fixture = love.physics.newFixture(self.body, self.shape)
+
+    self.body:setFixedRotation(true)
+end
+
+function ActiveObject:update(dt)
+    -- можно переопределять, добавим базовую обработку
+end
+
+function ActiveObject:draw()
+    local x, y = self.body:getPosition()
+    love.graphics.setColor(0.2, 0.8, 0.2)
+    love.graphics.circle("fill", x, y, self.radius)
+    love.graphics.setColor(1, 1, 1)
+end
+
+return ActiveObject
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/objects/active/ActiveObject.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/objects/active/InteractiveObject.lua ====
+
+local InteractiveObject = {}
+InteractiveObject.__index = InteractiveObject
+
+local DebugLog = require("src.utils.debuglog")
+
+function InteractiveObject:new(world, x, y, width, height)
+    local self = setmetatable({}, InteractiveObject)
+
+    self.body = love.physics.newBody(world, x, y, "static")
+    self.shape = love.physics.newRectangleShape(width, height)
+    self.fixture = love.physics.newFixture(self.body, self.shape)
+    self.width = width
+    self.height = height
+
+    return self
+end
+
+function InteractiveObject:draw()
+    love.graphics.setColor(1, 0.8, 0.2) -- Жёлтый
+    local x, y = self.body:getPosition()
+    love.graphics.rectangle("fill", x - self.width / 2, y - self.height / 2, self.width, self.height)
+end
+
+function InteractiveObject:onTouch()
+    DebugLog.print("InteractiveObject touched!")
+end
+
+return InteractiveObject
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/objects/active/InteractiveObject.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/objects/active/Mob.lua ====
+
+-- src/objects/active/Mob.lua
+local class = require("lib.middleclass")
+local ActiveObject = require("src.objects.active.ActiveObject")
+local Stats = require("src.core.Stats")
+
+local Mob = class("Mob", ActiveObject)
+
+function Mob:initialize(world, x, y)
+    ActiveObject.initialize(self, world, x, y, 14) -- Чуть меньше игрока
+    self.stats = Stats:new(50) -- Мобы слабее
+    self.speed = 60 -- Медленнее игрока
+    self.color = {0.8, 0.2, 0.2} -- Красноватый
+end
+
+function Mob:update(dt, player)
+    if not self.stats.isAlive then return end
+    
+    -- Простейший AI: движение к игроку
+    local px, py = player.body:getPosition()
+    local mx, my = self.body:getPosition()
+    
+    local dx = px - mx
+    local dy = py - my
+    local dist = math.sqrt(dx*dx + dy*dy)
+    
+    if dist > 0 then
+        dx = dx / dist * self.speed
+        dy = dy / dist * self.speed
+        self.body:setLinearVelocity(dx, dy)
+    end
+end
+
+function Mob:draw()
+    if not self.stats.isAlive then return end
+    
+    local x, y = self.body:getPosition()
+    
+    -- Тело моба
+    love.graphics.setColor(self.color)
+    love.graphics.circle("fill", x, y, self.radius)
+    
+    -- Healthbar
+    local w, h = 30, 4
+    local healthPercent = self.stats.health / self.stats.maxHealth
+    
+    love.graphics.setColor(0.3, 0, 0)
+    love.graphics.rectangle("fill", x - w/2, y - 25, w, h)
+    love.graphics.setColor(0.8, 0, 0)
+    love.graphics.rectangle("fill", x - w/2, y - 25, w * healthPercent, h)
+    love.graphics.setColor(1, 1, 1)
+end
+
+return Mob
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/objects/active/Mob.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/objects/active/Player.lua ====
+
+
+-- src/objects/active/Player.lua
+local class = require("lib.middleclass")
+local ActiveObject = require("src.objects.active.ActiveObject")
+local Inventory = require("src.core.Inventory")
+local Stats = require("src.core.Stats") -- Добавляем
+
+local Player = class("Player", ActiveObject)
+
+function Player:initialize(world, x, y)
+    ActiveObject.initialize(self, world, x, y, 16)
+    self.inventory = Inventory:new()
+    self.stats = Stats:new(200) -- Здоровье игрока
+end
+
+-- Добавим метод для отрисовки здоровья
+function Player:draw()
+    ActiveObject.draw(self) -- Родительский draw
+    
+    -- Рисуем healthbar над игроком
+    local x, y = self.body:getPosition()
+    local w, h = 40, 5
+    local healthPercent = self.stats.health / self.stats.maxHealth
+    
+    love.graphics.setColor(0.5, 0, 0)
+    love.graphics.rectangle("fill", x - w/2, y - 30, w, h)
+    love.graphics.setColor(0, 1, 0)
+    love.graphics.rectangle("fill", x - w/2, y - 30, w * healthPercent, h)
+    love.graphics.setColor(1, 1, 1)
+end
+
+
+
+-- Обновление с использованием direction как таблицы {x, y}
+function Player:update(dt, direction)
+    -- Если direction существует и не пустое
+    if direction and direction.x ~= nil and direction.y ~= nil then
+        local vx = direction.x * self.speed
+        local vy = direction.y * self.speed
+        self.body:setLinearVelocity(vx, vy)
+    else
+        self.body:setLinearVelocity(0, 0)
+    end
+end
+
+return Player
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/objects/active/Player.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/objects/items/Item.lua ====
+
+local class = require("lib.middleclass")
+local GameObject = require("src.objects.GameObject") -- если есть базовый класс
+
+local Item = class("Item", GameObject)
+
+function Item:initialize(x, y, name)
+    self.x = x
+    self.y = y
+    self.name = name or "Unknown Item"
+    self.radius = 16
+    self.picked = false
+end
+
+function Item:draw()
+    love.graphics.setColor(1, 1, 0)
+    love.graphics.circle("fill", self.x, self.y, 8)
+    love.graphics.setColor(1, 1, 1)
+end
+
+function Item:update(dt, player)
+    local px, py = player.body:getPosition()
+    local dx = self.x - px
+    local dy = self.y - py
+
+    if dx * dx + dy * dy < self.radius * self.radius then
+        player.inventory:add(self)
+        self.picked = true
+    end
+end
+
+return Item
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/objects/items/Item.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/objects/static/Decoration.lua ====
+
+
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/objects/static/Decoration.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/objects/static/StaticObject.lua ====
+
+local class = require("lib.middleclass")
+local GameObject = require("src.objects.GameObject")
+
+local StaticObject = class("StaticObject", GameObject)
+
+function StaticObject:initialize(world, x, y, w, h)
+    GameObject.initialize(self, world, x, y)
+
+    self.w = w or 64
+    self.h = h or 64
+
+    self.body = love.physics.newBody(world, x, y, "static")
+    self.shape = love.physics.newRectangleShape(self.w, self.h)
+    self.fixture = love.physics.newFixture(self.body, self.shape)
+end
+
+function StaticObject:draw()
+    local x, y = self.body:getPosition()
+    local w, h = self.w, self.h
+    love.graphics.setColor(0.5, 0.5, 0.5)
+    love.graphics.rectangle("fill", x - w / 2, y - h / 2, w, h)
+    love.graphics.setColor(1, 1, 1)
+end
+
+return StaticObject
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/objects/static/StaticObject.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/objects/static/Wall.lua ====
+
+local class = require("lib.middleclass")
+local StaticObject = require("src.objects.static.StaticObject")
+
+local Wall = class("Wall", StaticObject)
+
+function Wall:initialize(world, x, y, w, h)
+    StaticObject.initialize(self, world, x, y, w, h)
+end
+
+return Wall
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/objects/static/Wall.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/DebugConsole.lua ====
+
+local class = require("lib.middleclass")
+local UIManager = require("src.ui.UIManager")
+local UIInspectorPopup = require("src.ui.UIInspectorPopup")
+
+local DebugConsole = class("DebugConsole")
+
+-- Единый экземпляр консоли
+local instance = nil
+
+-- Стили консоли
+local style = {
+    bg = {0.1, 0.1, 0.15, 0.95},
+    text = {0.9, 0.9, 0.9},
+    input = {0.15, 0.15, 0.2, 0.9},
+    button = {
+        normal = {0.2, 0.2, 0.3, 0.9},
+        hover = {0.3, 0.3, 0.4, 0.9}
+    }
+}
+
+-- Данные консоли
+local debugObjects = {}
+local debugLogs = {}
+local commandHistory = {}
+local currentCommand = ""
+local isVisible = false
+local inputFocus = false
+local uiManager = UIManager:new()
+
+function DebugConsole:initialize()
+    if instance then
+        return instance
+    end
+    instance = self
+    return self
+end
+
+function DebugConsole.printLog(message)
+    table.insert(debugLogs, tostring(message))
+    if #debugLogs > 100 then
+        table.remove(debugLogs, 1)
+    end
+end
+
+function DebugConsole.registerDebugObject(obj, name)
+    name = name or "obj_"..#debugObjects+1
+    local popup = UIInspectorPopup:new(200, 100, 350, 450, name, obj)
+    uiManager:add(popup)
+    table.insert(debugObjects, {obj = obj, popup = popup})
+    return popup
+end
+
+function DebugConsole.update(dt)
+    if isVisible then
+        uiManager:update(dt)
+    end
+end
+
+function DebugConsole.draw()
+    if not isVisible then return end
+    
+    -- Фон консоли
+    love.graphics.setColor(style.bg)
+    love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), 300)
+    
+    -- Логи
+    love.graphics.setColor(style.text)
+    for i = math.max(1, #debugLogs-15), #debugLogs do
+        love.graphics.print(debugLogs[i], 10, 10 + (i-1)*20)
+    end
+    
+    -- Поле ввода
+    love.graphics.setColor(style.input)
+    love.graphics.rectangle("fill", 0, 300, love.graphics.getWidth(), 30)
+    love.graphics.setColor(style.text)
+    love.graphics.print("> "..currentCommand, 10, 305)
+    
+    -- UI элементы
+    uiManager:draw()
+end
+
+function DebugConsole.processTouchPress(id, x, y)
+    if not isVisible and y < 50 and x < 150 then
+        isVisible = true
+        return true
+    end
+    
+    if not isVisible then return false end
+    
+    -- Проверка поля ввода
+    inputFocus = (y >= 300 and y <= 330)
+    
+    return uiManager:touchpressed(id, x, y)
+end
+
+function DebugConsole.processTextInput(text)
+    if inputFocus then
+        currentCommand = currentCommand .. text
+        return true
+    end
+    return false
+end
+
+function DebugConsole.processKeyPress(key)
+    if key == "f1" then
+        isVisible = not isVisible
+        return true
+    end
+    
+    if inputFocus then
+        if key == "backspace" then
+            currentCommand = currentCommand:sub(1, -2)
+        elseif key == "return" then
+            DebugConsole.executeCommand(currentCommand)
+            currentCommand = ""
+        end
+        return true
+    end
+    
+    return false
+end
+
+function DebugConsole.executeCommand(cmd)
+    table.insert(commandHistory, cmd)
+    DebugConsole.printLog("> "..cmd)
+    
+    if cmd == "clear" then
+        debugLogs = {}
+    else
+        DebugConsole.printLog("Command executed: "..cmd)
+    end
+end
+
+-- Возвращаем сам класс, а не экземпляр
+return DebugConsole
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/DebugConsole.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/UIButton.lua ====
+
+-- UIButton.lua
+local class = require("lib.middleclass")
+local UIElement = require("src.ui.UIElement")
+
+local UIButton = class("UIButton", UIElement)
+
+function UIButton:initialize(x, y, width, height, label, onClick)
+    UIElement.initialize(self, x, y, width, height)
+    self.label = label or "Button"
+    self.onClick = onClick
+end
+
+function UIButton:draw()
+    if not self.visible then return end
+    love.graphics.setColor(0.3, 0.3, 0.3)
+    love.graphics.rectangle("fill", self.x, self.y, self.width, self.height)
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.printf(self.label, self.x, self.y + self.height / 2 - 6, self.width, "center")
+end
+
+function UIButton:touchpressed(id, x, y)
+    if self:isInside(x, y) and self.onClick then
+        self.onClick()
+    end
+end
+
+return UIButton
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/UIButton.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/UIElement.lua ====
+
+
+
+local class = require("lib.middleclass")
+
+local UIElement = class("UIElement")
+
+function UIElement:initialize(x, y, width, height)
+    self.x = x or 0
+    self.y = y or 0
+    self.width = width or 100
+    self.height = height or 50
+    self.visible = true
+    self.zIndex = 0
+end
+
+function UIElement:isInside(x, y)
+    return x >= self.x and x <= self.x + self.width and
+           y >= self.y and y <= self.y + self.height
+end
+
+function UIElement:update(dt) end
+function UIElement:draw() end
+function UIElement:touchpressed(id, x, y) end
+function UIElement:touchmoved(id, x, y) end
+function UIElement:touchreleased(id, x, y) end
+
+return UIElement
+
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/UIElement.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/UIInputField.lua ====
+
+-- UIInputField.lua
+local class = require("lib.middleclass")
+local UIElement = require("src.ui.UIElement")
+
+local UIInputField = class("UIInputField", UIElement)
+
+function UIInputField:initialize(x, y, width, height)
+    UIElement.initialize(self, x, y, width, height)
+    self.text = ""
+    self.active = false
+end
+
+function UIInputField:draw()
+    if not self.visible then return end
+    love.graphics.setColor(self.active and {0.4, 0.4, 0.5} or {0.2, 0.2, 0.2})
+    love.graphics.rectangle("fill", self.x, self.y, self.width, self.height)
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.print(self.text, self.x + 5, self.y + 5)
+end
+
+function UIInputField:touchpressed(id, x, y)
+    self.active = self:isInside(x, y)
+    love.keyboard.setTextInput(self.active)
+end
+
+function UIInputField:textinput(t)
+    if self.active then
+        self.text = self.text .. t
+    end
+end
+
+function UIInputField:keypressed(key)
+    if self.active and key == "backspace" then
+        self.text = self.text:sub(1, -2)
+    end
+end
+
+return UIInputField
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/UIInputField.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/UIInspectorPopup.lua ====
+
+local class = require("lib.middleclass")
+local UIPopup = require("src.ui.UIPopup")
+
+local UIInspectorPopup = class("UIInspectorPopup", UIPopup)
+
+function UIInspectorPopup:initialize(x, y, w, h, title, target)
+    UIPopup.initialize(self, x, y, w, h, title)
+    self.target = target
+    self.scrollY = 0
+    self.itemHeight = 20
+    self.font = love.graphics.newFont(12)
+end
+
+function UIInspectorPopup:draw()
+    -- Фон
+    love.graphics.setColor(0.1, 0.1, 0.2, 0.9)
+    love.graphics.rectangle("fill", self.x, self.y, self.width, self.height, 5)
+    
+    -- Заголовок
+    love.graphics.setColor(0.2, 0.2, 0.3)
+    love.graphics.rectangle("fill", self.x, self.y, self.width, 30)
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.print(self.title, self.x + 10, self.y + 5)
+    
+    -- Кнопка закрытия
+    love.graphics.setColor(0.9, 0.2, 0.2)
+    love.graphics.rectangle("fill", self.x + self.width - 30, self.y, 30, 30)
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.print("X", self.x + self.width - 20, self.y + 5)
+    
+    -- Содержимое
+    love.graphics.setScissor(self.x, self.y + 30, self.width, self.height - 30)
+    
+    local y = self.y + 30 - self.scrollY
+    love.graphics.setFont(self.font)
+    
+    local function drawProperties(t, indent, yPos)
+        for k, v in pairs(t) do
+            if yPos >= self.y + 30 and yPos <= self.y + self.height - 30 then
+                local text = string.rep(" ", indent) .. tostring(k) .. ": " .. tostring(v)
+                love.graphics.print(text, self.x + 10, yPos)
+            end
+            yPos = yPos + self.itemHeight
+            
+            if type(v) == "table" and k ~= "__index" then
+                yPos = drawProperties(v, indent + 2, yPos)
+            end
+        end
+        return yPos
+    end
+    
+    drawProperties(self.target, 0, y)
+    love.graphics.setScissor()
+end
+
+function UIInspectorPopup:touchpressed(id, x, y)
+    -- Кнопка закрытия
+    if x >= self.x + self.width - 30 and x <= self.x + self.width and
+       y >= self.y and y <= self.y + 30 then
+        self.visible = false
+        return true
+    end
+    
+    -- Начало перетаскивания
+    if y >= self.y and y <= self.y + 30 then
+        self.dragging = true
+        return true
+    end
+    
+    return self:hitTest(x, y)
+end
+
+function UIInspectorPopup:touchmoved(id, x, y, dx, dy)
+    if self.dragging then
+        self.x = self.x + dx
+        self.y = self.y + dy
+    end
+end
+
+function UIInspectorPopup:touchreleased()
+    self.dragging = false
+end
+
+return UIInspectorPopup
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/UIInspectorPopup.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/UILabel.lua ====
+
+-- UILabel.lua
+local class = require("lib.middleclass")
+local UIElement = require("src.ui.UIElement")
+
+local UILabel = class("UILabel", UIElement)
+
+function UILabel:initialize(x, y, text, font)
+    UIElement.initialize(self, x, y, 0, 0)
+    self.text = text or ""
+    self.font = font or love.graphics.newFont(12)
+end
+
+function UILabel:draw()
+    if not self.visible then return end
+    love.graphics.setFont(self.font)
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.print(self.text, self.x, self.y)
+end
+
+return UILabel
+
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/UILabel.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/UIManager.lua ====
+
+
+
+local class = require("lib.middleclass")
+
+local UIManager = class("UIManager")
+
+function UIManager:initialize()
+    self.elements = {}
+    self.focusedElement = nil
+end
+
+function UIManager:add(element)
+    table.insert(self.elements, element)
+    table.sort(self.elements, function(a, b) return (a.zIndex or 0) < (b.zIndex or 0) end)
+end
+
+function UIManager:remove(element)
+    for i, e in ipairs(self.elements) do
+        if e == element then
+            table.remove(self.elements, i)
+            if self.focusedElement == element then
+                self.focusedElement = nil
+            end
+            break
+        end
+    end
+end
+
+function UIManager:update(dt)
+    for i = #self.elements, 1, -1 do
+        if self.elements[i].update then
+            self.elements[i]:update(dt)
+        end
+    end
+end
+
+function UIManager:draw()
+    for _, element in ipairs(self.elements) do
+        if element.draw then
+            element:draw()
+        end
+    end
+end
+
+function UIManager:touchpressed(id, x, y)
+    for i = #self.elements, 1, -1 do
+        local element = self.elements[i]
+        if element.isInside and element:touchpressed(id, x, y) then
+            self.focusedElement = element
+            return true
+        end
+    end
+    return false
+end
+
+function UIManager:touchmoved(id, x, y)
+    if self.focusedElement and self.focusedElement.touchmoved then
+        self.focusedElement:touchmoved(id, x, y)
+    end
+end
+
+function UIManager:touchreleased(id, x, y)
+    if self.focusedElement and self.focusedElement.touchreleased then
+        self.focusedElement:touchreleased(id, x, y)
+    end
+end
+
+return UIManager
+
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/UIManager.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/UIPopup.lua ====
+
+-- src/ui/UIPopup.lua
+local class = require("lib.middleclass")
+
+local UIPopup = class("UIPopup")
+
+function UIPopup:initialize(x, y, width, height, title)
+    self.x = x or 100
+    self.y = y or 100
+    self.width = width or 300
+    self.height = height or 400
+    self.title = title or "Popup"
+    self.visible = true
+    self.zIndex = 100 -- Высокий индекс чтобы был поверх других элементов
+    self.dragging = false
+end
+
+-- Базовые методы для переопределения
+function UIPopup:update(dt) end
+function UIPopup:draw() end
+function UIPopup:touchpressed(id, x, y) end
+function UIPopup:touchmoved(id, x, y, dx, dy) end
+function UIPopup:touchreleased(id, x, y) end
+
+-- Проверка попадания в элемент
+function UIPopup:hitTest(x, y)
+    return self.visible and x >= self.x and x <= self.x + self.width and
+           y >= self.y and y <= self.y + self.height
+end
+
+return UIPopup
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/UIPopup.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/UIScrollArea.lua ====
+
+-- src/ui/UIScrollArea.lua
+local class = require("lib.middleclass")
+local UIElement = require "src.ui.UIElement"
+local DebugLog = require("src.utils.debuglog")
+
+local UIScrollArea = class("UIScrollArea", UIElement)
+
+function UIScrollArea:initialize(x, y, width, height)
+    UIElement.initialize(self, x, y, width, height)
+    self.controls = {}
+    self.scrollY = 0
+    self.scrollSpeed = 20
+    self.contentHeight = 0
+    
+    DebugLog.print("x:" .. x .. "  y: " .. y)
+    DebugLog.print("while:" .. width .. "height: " .. height)
+end
+
+function UIScrollArea:addControl(control)
+    table.insert(self.controls, control)
+    self:updateContentHeight()
+end
+
+function UIScrollArea:updateContentHeight()
+    local maxY = 0
+    for _, ctrl in ipairs(self.controls) do
+        local bottom = ctrl.y + (ctrl.height or 0)
+        if bottom > maxY then
+            maxY = bottom
+        end
+    end
+    self.contentHeight = maxY - self.y
+end
+
+function UIScrollArea:draw()
+    
+    -- Сохраняем область вывода
+    love.graphics.setScissor(self.x, self.y, self.width, self.height)
+    
+    love.graphics.push()
+    love.graphics.translate(0, -self.scrollY)
+
+    for _, ctrl in ipairs(self.controls) do
+        ctrl:draw()
+    end
+
+    love.graphics.pop()
+    love.graphics.setScissor()
+end
+
+function UIScrollArea:touchpressed(id, x, y)
+    if not self:isInside(x, y) then return false end
+
+    local localY = y + self.scrollY
+    for _, ctrl in ipairs(self.controls) do
+        if ctrl.touchpressed and ctrl:touchpressed(id, x, localY) then
+            return true
+        end
+    end
+    return true
+end
+
+function UIScrollArea:touchmoved(id, x, y, dx, dy)
+    if not self:isInside(x, y) then return false end
+
+    self.scrollY = math.max(0, math.min(self.scrollY - dy, math.max(0, self.contentHeight - self.height)))
+    return true
+end
+
+function UIScrollArea:isInside(x, y)
+    return x >= self.x and x <= self.x + self.width and y >= self.y and y <= self.y + self.height
+end
+
+return UIScrollArea
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/UIScrollArea.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/fonts/init.lua ====
+
+local Fonts = {}
+
+function Fonts.load()
+    Fonts.default = love.graphics.newFont("src/ui/fonts/font.otf", 16)
+    Fonts.big = love.graphics.newFont("src/ui/fonts/font.otf", 24)
+end
+
+return Fonts
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/fonts/init.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/joystick.lua ====
+
+local DebugLog = require("src.utils.debuglog")
+local Joystick = {}
+
+Joystick.baseRadius = 50
+Joystick.knobRadius = 20
+Joystick.active = false
+Joystick.identifier = nil
+Joystick.baseX, Joystick.baseY = 80, love.graphics.getHeight() - 80
+Joystick.knobX, Joystick.knobY = Joystick.baseX, Joystick.baseY
+Joystick.dx, Joystick.dy = 0, 0
+
+
+
+function Joystick.update()
+    if not Joystick.active then
+        Joystick.dx, Joystick.dy = 0, 0
+    end
+end
+
+function Joystick.draw()
+    love.graphics.setColor(0.3, 0.3, 0.3, 0.5)
+    love.graphics.circle("fill", Joystick.baseX, Joystick.baseY, Joystick.baseRadius)
+
+    if Joystick.active then
+        love.graphics.setColor(1, 1, 1, 0.8)
+        love.graphics.circle("fill", Joystick.knobX, Joystick.knobY, Joystick.knobRadius)
+    end
+end
+
+function Joystick.touchpressed(id, x, y, dx, dy, pressure)
+    
+
+    local dist = math.sqrt((x - Joystick.baseX)^2 + (y - Joystick.baseY)^2)
+    if dist <= Joystick.baseRadius then
+        Joystick.active = true
+        Joystick.identifier = id
+        Joystick.updatePosition(x, y)
+        
+    end
+end
+
+function Joystick.touchmoved(id, x, y)
+    if Joystick.active and id == Joystick.identifier then
+        
+        Joystick.updatePosition(x, y)
+    end
+end
+
+function Joystick.touchreleased(id, x, y)
+    if Joystick.active and id == Joystick.identifier then
+        Joystick.active = false
+        Joystick.identifier = nil
+        Joystick.knobX, Joystick.knobY = Joystick.baseX, Joystick.baseY
+        Joystick.dx, Joystick.dy = 0, 0
+    end
+end
+
+function Joystick.updatePosition(x, y)
+    
+
+    local dx = x - Joystick.baseX
+    local dy = y - Joystick.baseY
+    local dist = math.sqrt(dx * dx + dy * dy)
+    local maxDist = Joystick.baseRadius
+
+    if dist > maxDist then
+        dx = dx / dist * maxDist
+        dy = dy / dist * maxDist
+    end
+
+    Joystick.knobX = Joystick.baseX + dx
+    Joystick.knobY = Joystick.baseY + dy
+    Joystick.dx = dx / maxDist
+    Joystick.dy = dy / maxDist
+end
+
+function Joystick.getDirection()
+    return {x = Joystick.dx, y = Joystick.dy}
+end
+
+function Joystick.init()
+    Joystick.baseRadius = 50
+    Joystick.knobRadius = 20
+    Joystick.active = false
+    Joystick.identifier = nil
+    Joystick.baseX = 80
+    Joystick.baseY = love.graphics.getHeight() - 80
+    Joystick.knobX = Joystick.baseX
+    Joystick.knobY = Joystick.baseY
+    Joystick.dx = 0
+    Joystick.dy = 0
+end
+
+return Joystick
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/joystick.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/testui.lua ====
+
+local class = require("lib.middleclass")
+local UIManager = require("src.ui.UIManager")
+local DebugConsole = require("src.ui.DebugConsole")
+
+local TestUI = class("TestUI")
+
+function TestUI:initialize()
+    self.uiManager = UIManager:new()
+    self:setupTestUI()
+    DebugConsole:printLog("TestUI initialized")
+end
+
+function TestUI:setupTestUI()
+    -- Создаем тестовые UI-элементы
+    self.testButton = {
+        x = 200, y = 200, width = 200, height = 60,
+        text = "Test Button",
+        color = {0.3, 0.6, 0.8},
+        draw = function(self)
+            love.graphics.setColor(self.color)
+            love.graphics.rectangle("fill", self.x, self.y, self.width, self.height, 10)
+            love.graphics.setColor(1, 1, 1)
+            love.graphics.printf(self.text, self.x, self.y + self.height/2 - 10, self.width, "center")
+        end,
+        touchpressed = function(self, x, y)
+            if x >= self.x and x <= self.x + self.width and
+               y >= self.y and y <= self.y + self.height then
+                DebugConsole:printLog("Button pressed!")
+                self.color = {0.8, 0.3, 0.3}
+                return true
+            end
+            return false
+        end,
+        touchreleased = function(self)
+            self.color = {0.3, 0.6, 0.8}
+        end
+    }
+
+    -- Добавляем элементы в UI Manager
+    self.uiManager:add(self.testButton)
+end
+
+function TestUI:load()
+    DebugConsole:printLog("TestUI loaded")
+    -- Можно добавить дополнительные тестовые объекты
+    DebugConsole:registerDebugObject(self, "TestUI System")
+end
+
+function TestUI:update(dt)
+    self.uiManager:update(dt)
+end
+
+function TestUI:draw()
+    -- Фон тестового интерфейса
+    love.graphics.setColor(0.1, 0.1, 0.15)
+    love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
+    
+    -- Подпись тестового режима
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.print("TEST UI MODE", 20, 20)
+    
+    -- Отрисовка UI элементов
+    self.uiManager:draw()
+end
+
+-- Обработчики ввода (делегируем UIManager)
+function TestUI:touchpressed(id, x, y, dx, dy, pressure)
+    self.uiManager:touchpressed(id, x, y, dx, dy, pressure)
+end
+
+function TestUI:touchmoved(id, x, y, dx, dy, pressure)
+    self.uiManager:touchmoved(id, x, y, dx, dy, pressure)
+end
+
+function TestUI:touchreleased(id, x, y, dx, dy, pressure)
+    self.uiManager:touchreleased(id, x, y, dx, dy, pressure)
+end
+
+function TestUI:textinput(text)
+    self.uiManager:textinput(text)
+end
+
+function TestUI:keypressed(key)
+    self.uiManager:keypressed(key)
+end
+
+return TestUI
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/ui/testui.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/utils/CommandSystem.lua ====
+
+-- src/utils/CommandSystem.lua
+local class = require("lib.middleclass")
+local CommandSystem = class("CommandSystem")
+
+function CommandSystem:initialize(world, player, objectManager, spawnManager)
+    self.world = world
+    self.player = player
+    self.objectManager = objectManager
+    self.spawnManager = spawnManager
+    self:registerCoreCommands()
+end
+
+function CommandSystem:registerCoreCommands()
+    local cm = require("src.utils.ConsoleManager")
+
+    -- Команда спавна
+    cm:registerCommand("spawn", "Spawn objects: spawn [mob|item] [x] [y] [type]", function(type, x, y, ...)
+        x, y = tonumber(x), tonumber(y)
+        if type == "mob" then
+            local mob = self.spawnManager:spawnMob(x, y)
+            return string.format("Spawned mob at %.1f,%.1f", mob.body:getPosition())
+        elseif type == "item" then
+            local itemType = ...
+            local item = self.spawnManager:spawnItem(itemType or "default", x, y)
+            return string.format("Spawned %s item at %.1f,%.1f", itemType or "default", x, y)
+        end
+        return "Unknown type: "..(type or "nil")
+    end)
+
+    -- Команда телепортации
+    cm:registerCommand("tp", "Teleport player: tp [x] [y]", function(x, y)
+        x, y = tonumber(x), tonumber(y)
+        if x and y then
+            self.player.body:setPosition(x, y)
+            return string.format("Player teleported to %.1f,%.1f", x, y)
+        end
+        return "Invalid coordinates"
+    end)
+
+    -- Команда урона
+    cm:registerCommand("damage", "Damage player: damage [amount]", function(amount)
+        amount = tonumber(amount) or 10
+        local alive = self.player.stats:takeDamage(amount)
+        return alive and string.format("Player took %d damage (HP: %d/%d)", 
+               amount, self.player.stats.health, self.player.stats.maxHealth) 
+               or "Player died!"
+    end)
+
+    -- Команда лечения
+    cm:registerCommand("heal", "Heal player: heal [amount]", function(amount)
+        amount = tonumber(amount) or 25
+        self.player.stats:heal(amount)
+        return string.format("Player healed for %d (HP: %d/%d)", 
+               amount, self.player.stats.health, self.player.stats.maxHealth)
+    end)
+end
+
+return CommandSystem
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/utils/CommandSystem.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/utils/ConsoleManager.lua ====
+
+-- src/utils/ConsoleManager.lua
+local ConsoleManager = {
+    commands = {},
+    commandHistory = {},
+    historyIndex = 0
+}
+
+
+-- Локальная функция для обрезки пробелов
+local function trim(s)
+    return (s:gsub("^%s*(.-)%s*$", "%1"))
+end
+
+function ConsoleManager:registerCommand(name, description, handler)
+    assert(type(name) == "string", "Command name must be a string")
+    assert(not self.commands[name], "Command '"..name.."' already exists")
+    
+    self.commands[name] = {
+        desc = description,
+        exec = handler,
+        name = name
+    }
+end
+
+function ConsoleManager:execute(input)
+    local DebugLog = require("src.utils.debuglog")
+    DebugLog.print("> start")
+    if not input or trim(input) == "" then 
+        return false, "Empty command" 
+    end
+    
+    DebugLog.print("> normal")
+    -- Нормализация ввода
+    input = trim(input:gsub("%s+", " "))
+    table.insert(self.commandHistory, input)
+    self.historyIndex = #self.commandHistory + 1
+
+    local parts = {}
+    for part in input:gmatch("%S+") do
+        table.insert(parts, part)
+    end
+
+    local cmdName = parts[1]
+    local cmd = self.commands[cmdName]
+    
+    DebugLog.print("> main execute")
+    if not cmd then
+        local suggestions = {}
+        for name in pairs(self.commands) do
+            if name:find(cmdName or "") then
+                table.insert(suggestions, name)
+            end
+        end
+        local suggestionText = #suggestions > 0 and "\nDid you mean: "..table.concat(suggestions, ", ") or ""
+        return false, "Unknown command: "..(cmdName or "")..suggestionText
+    end
+
+    table.remove(parts, 1) -- Удаляем имя команды
+
+    local success, result = pcall(function()
+        return cmd.exec(unpack(parts))
+    end)
+
+    if not success then
+        return false, "Error: "..result.."\nUsage: "..cmd.name.." "..cmd.desc
+    end
+
+    return true, result
+end
+
+
+
+
+function ConsoleManager:getHistory(offset)
+    self.historyIndex = math.max(1, math.min(#self.commandHistory, self.historyIndex + offset))
+    return self.commandHistory[self.historyIndex] or ""
+end
+
+-- Базовая команда help
+ConsoleManager:registerCommand("help", "Show help [command]", function(cmdName)
+    if cmdName then
+        local cmd = self.commands[cmdName]
+        if not cmd then return "Command not found" end
+        return string.format("%s - %s\nUsage: %s %s", 
+               cmd.name, cmd.desc, cmd.name, cmd.desc)
+    end
+
+    local result = {"Available commands:"}
+    for _, cmd in pairs(self.commands) do
+        table.insert(result, string.format("%-10s - %s", cmd.name, cmd.desc))
+    end
+    return table.concat(result, "\n")
+end)
+
+return ConsoleManager
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/utils/ConsoleManager.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/utils/debuglog.lua ====
+
+-- src/utils/debuglog.lua
+local ConsoleManager = require("src.utils.ConsoleManager")
+local DebugLog = {
+    logs = {},
+    maxLines = 100,
+    visible = false,
+    scroll = 0,
+    button = { x = 10, y = 10, w = 50, h = 50 },
+    inputText = "",
+    inputActive = false,
+    settingsVisible = false,
+    commandHistory = {},
+    historyIndex = 0,
+    scrollTouchId = nil,
+    lastTouchY = 0,
+    autoScroll = true,
+    
+    settings = {
+        showFPS = true,
+        showPhysics = false,
+        showPlayerInfo = true,
+        enableCheats = false
+    },
+    
+    font = nil
+}
+-- Где-то при инициализации DebugLog добавьте:
+DebugLog.sortedSettings = {
+    "showFPS", 
+    "showPhysics", 
+    "showPlayerInfo", 
+    "enableCheats"
+    -- Можно добавлять новые настройки здесь
+}
+DebugLog.settingsScroll = 0
+
+-- Инициализация
+function DebugLog.init()
+    DebugLog.font = love.graphics.newFont(12)
+end
+
+-- Добавление сообщения
+function DebugLog.print(str)
+
+    local message = tostring(str or "nil")
+    table.insert(DebugLog.logs, message)
+    
+    if #DebugLog.logs > DebugLog.maxLines then
+        table.remove(DebugLog.logs, 1)
+    end
+    
+    if DebugLog.autoScroll then
+        DebugLog.scroll = 0
+    end
+end
+
+-- Отрисовка консоли
+function DebugLog.draw()
+    if not DebugLog.visible then
+        -- Кнопка открытия
+        love.graphics.setColor(0.2, 0.2, 0.2, 0.8)
+        love.graphics.rectangle("fill", DebugLog.button.x, DebugLog.button.y, 
+                              DebugLog.button.w, DebugLog.button.h)
+        love.graphics.setColor(1, 1, 1)
+        love.graphics.print(">", DebugLog.button.x + 15, DebugLog.button.y + 15)
+        return
+    end
+
+    local consoleHeight = love.graphics.getHeight() * 0.5
+    local consoleWidth = love.graphics.getWidth()
+    
+    -- Фон консоли
+    love.graphics.setColor(0, 0, 0, 0.7)
+    love.graphics.rectangle("fill", 0, 0, consoleWidth, consoleHeight)
+
+
+    love.graphics.setScissor(0, 0, consoleWidth - 15, consoleHeight - 30)
+    love.graphics.setColor(1, 1, 1)
+    
+    local lineHeight = DebugLog.font:getHeight() + 2
+    local visibleLines = math.floor((consoleHeight - 30) / lineHeight)
+    
+    for i = 0, visibleLines - 1 do
+        local logIndex = #DebugLog.logs - visibleLines + i - math.floor(DebugLog.scroll)
+        if logIndex > 0 and DebugLog.logs[logIndex] then
+                -- Отрисовка логов
+            if DebugLog.logs[logIndex]:lower():find("error") then
+                love.graphics.setColor(1, 0.3, 0.3)
+            elseif DebugLog.logs[logIndex]:lower():find("warning") then
+                love.graphics.setColor(1, 1, 0.4)
+            else
+                love.graphics.setColor(1, 1, 1)
+            end
+            love.graphics.print(DebugLog.logs[logIndex], 10, 10 + i * lineHeight)
+        end
+    end
+    love.graphics.setScissor()
+
+    -- Панель ввода
+    love.graphics.setColor(0.3, 0.3, 0.3, 0.9)
+    love.graphics.rectangle("fill", 0, consoleHeight - 30, consoleWidth, 30)
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.print("> "..DebugLog.inputText, 20, consoleHeight - 25)
+    
+    -- Кнопки управления
+    love.graphics.setColor(0.2, 0.2, 0.2, 0.8)
+    love.graphics.rectangle("fill", DebugLog.button.x, DebugLog.button.y, DebugLog.button.w, DebugLog.button.h)
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.print("X", DebugLog.button.x + 15, DebugLog.button.y + 15)
+    
+    -- Кнопка настроек
+    love.graphics.rectangle("fill", DebugLog.button.x + DebugLog.button.w + 10, DebugLog.button.y, 
+                          DebugLog.button.w, DebugLog.button.h)
+    love.graphics.print("⚙", DebugLog.button.x + DebugLog.button.w + 25, DebugLog.button.y + 15)
+    
+    -- Окно настроек
+    if DebugLog.settingsVisible then
+        DebugLog.drawSettings()
+    end
+    
+    -- Кнопки истории команд
+    if DebugLog.inputActive then
+        DebugLog.drawHistoryButtons()
+    end
+end
+
+-- Кнопки истории команд
+function DebugLog.drawHistoryButtons()
+    local buttonY = love.graphics.getHeight() * 0.5 - 70
+    local buttonSize = 40
+    
+    -- Кнопка "вверх"
+    love.graphics.setColor(0.3, 0.3, 0.5, 0.7)
+    love.graphics.rectangle("fill", 20, buttonY, buttonSize, buttonSize)
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.print("↑", 35, buttonY + 10)
+    
+    -- Кнопка "вниз"
+    love.graphics.setColor(0.3, 0.3, 0.5, 0.7)
+    love.graphics.rectangle("fill", 70, buttonY, buttonSize, buttonSize)
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.print("↓", 85, buttonY + 10)
+end
+
+-- Обработка касаний
+function DebugLog.touchpressed(id, x, y)
+    -- Если открыты настройки - обрабатываем только их
+    if DebugLog.settingsVisible then
+        DebugLog.handleSettingsTouch(x, y)
+        return
+    end
+
+    -- Кнопка закрытия
+    if x >= DebugLog.button.x and x <= DebugLog.button.x + DebugLog.button.w and
+       y >= DebugLog.button.y and y <= DebugLog.button.y + DebugLog.button.h then
+        DebugLog.visible = not DebugLog.visible
+        DebugLog.hideKeyboard()
+        return
+    end
+
+    -- Кнопка настроек
+    if x >= DebugLog.button.x + DebugLog.button.w + 10 and 
+       x <= DebugLog.button.x + DebugLog.button.w * 2 + 10 and
+       y >= DebugLog.button.y and y <= DebugLog.button.y + DebugLog.button.h then
+        DebugLog.settingsVisible = not DebugLog.settingsVisible
+        return
+    end
+
+    -- Поле ввода
+    if y > love.graphics.getHeight() * 0.5 - 30 then
+        DebugLog.inputActive = true
+        love.keyboard.setTextInput(true, 0, love.graphics.getHeight() * 0.5 - 30, 
+                                 love.graphics.getWidth(), 30)
+        return
+    end
+
+    -- Кнопки истории команд
+    if DebugLog.inputActive then
+        local buttonY = love.graphics.getHeight() * 0.5 - 70
+        if y >= buttonY and y <= buttonY + 40 then
+            if x >= 20 and x <= 60 then  -- Вверх
+                if DebugLog.historyIndex > 1 then
+                    DebugLog.historyIndex = DebugLog.historyIndex - 1
+                    DebugLog.inputText = DebugLog.commandHistory[DebugLog.historyIndex]
+                end
+            elseif x >= 70 and x <= 110 then  -- Вниз
+                if DebugLog.historyIndex < #DebugLog.commandHistory then
+                    DebugLog.historyIndex = DebugLog.historyIndex + 1
+                    DebugLog.inputText = DebugLog.commandHistory[DebugLog.historyIndex] or ""
+                end
+            end
+            return
+        end
+    end
+
+    -- Начало прокрутки
+    DebugLog.scrollTouchId = id
+    DebugLog.lastTouchY = y
+end
+
+
+function DebugLog.touchmoved(id, x, y)
+    if DebugLog.scrollTouchId == id then
+        DebugLog.autoScroll = false
+        local dy = y - DebugLog.lastTouchY
+        DebugLog.scroll = math.min(DebugLog.getMaxScroll(), math.max(-3, DebugLog.scroll - dy * 0.5))
+        DebugLog.lastTouchY = y
+    end
+end
+
+function DebugLog.touchreleased(id, x, y)
+    if id == DebugLog.scrollTouchId then
+        DebugLog.scrollTouchId = nil
+    end
+end
+
+-- Управление клавиатурой
+function DebugLog.hideKeyboard()
+    if DebugLog.inputActive then
+        DebugLog.inputActive = false
+        love.keyboard.setTextInput(false)
+    end
+end
+
+-- Ввод текста
+function DebugLog.textinput(t)
+    if DebugLog.inputActive then
+        DebugLog.inputText = DebugLog.inputText .. t
+    end
+end
+
+-- Обработка клавиш (для Android)
+function DebugLog.keypressed(key)
+    if not DebugLog.inputActive then return end
+
+    -- Кнопка назад на Android
+    if key == "backspace" then
+        DebugLog.inputText = DebugLog.inputText:sub(1, -2)
+    
+    -- Кнопка "Готово" на Android-клавиатуре
+    elseif key == "return" then
+        table.insert(DebugLog.commandHistory, DebugLog.inputText)
+        DebugLog.historyIndex = #DebugLog.commandHistory + 1
+        
+        DebugLog.print("> "..DebugLog.inputText)
+        local success, result = ConsoleManager:execute(DebugLog.inputText)
+        
+        if result == "_CLEAR_CONSOLE" then
+            DebugLog.logs = {}
+        end
+        
+        DebugLog.print(result)
+        
+        DebugLog.inputText = ""
+        DebugLog.hideKeyboard()
+    end
+end
+
+function DebugLog.isTouchInside(x, y)
+    if not DebugLog.visible then
+        local b = DebugLog.button
+        return x >= b.x and x <= b.x + b.w and y >= b.y and y <= b.y + b.h
+    end
+    return y <= love.graphics.getHeight() * 0.5
+end
+
+function DebugLog.getMaxScroll()
+    local lineHeight = DebugLog.font:getHeight() + 2
+    local consoleHeight = love.graphics.getHeight() * 0.5
+    local visibleLines = math.floor((consoleHeight - 30) / lineHeight)
+    return math.max(0, #DebugLog.logs - visibleLines + 2)
+end
+
+-- Отрисовка настроек
+function DebugLog.drawSettings()
+    local settingsWidth = 300
+    local settingsHeight = math.min(400, love.graphics.getHeight() * 0.7) -- Ограничиваем максимальную высоту
+    local x = love.graphics.getWidth() - settingsWidth - 10
+    local y = 10
+    
+    -- Фон окна настроек
+    love.graphics.setColor(0.1, 0.1, 0.2, 0.9)
+    love.graphics.rectangle("fill", x, y, settingsWidth, settingsHeight)
+    
+    -- Заголовок
+    love.graphics.setColor(1, 1, 1)
+    love.graphics.print("Settings", x + 10, y + 10)
+    
+    -- Область для скроллинга
+    local contentHeight = #DebugLog.sortedSettings * 30 + 20
+    local scrollAreaHeight = settingsHeight - 40
+    local scrollRatio = scrollAreaHeight / contentHeight
+    
+    -- Включаем ножницы для области с настройками
+    love.graphics.setScissor(x, y + 40, settingsWidth, scrollAreaHeight)
+    
+    local itemY = y + 40 - (DebugLog.settingsScroll or 0)
+    local lineHeight = 30
+    local textX = x + 20
+    local checkboxX = x + settingsWidth - 40
+    
+    -- Отрисовка всех настроек
+    for _, name in ipairs(DebugLog.sortedSettings) do
+        local value = DebugLog.settings[name]
+        
+        -- Название настройки
+        love.graphics.print(name:gsub("^%l", string.upper), textX, itemY)
+        
+        -- Чекбокс
+        love.graphics.setColor(0.3, 0.3, 0.3)
+        love.graphics.rectangle("fill", checkboxX, itemY - 3, 20, 20)
+        
+        if value then
+            love.graphics.setColor(0, 1, 0)
+            love.graphics.print("✓", checkboxX + 3, itemY - 3)
+        end
+        
+        itemY = itemY + lineHeight
+    end
+    
+    -- Выключаем ножницы
+    love.graphics.setScissor()
+    
+    -- Полоса прокрутки (если контент не помещается)
+    if scrollRatio < 1 then
+        local scrollBarHeight = scrollAreaHeight * scrollRatio
+        local scrollBarY = y + 40 + (DebugLog.settingsScroll or 0) * scrollRatio
+        
+        love.graphics.setColor(0.5, 0.5, 0.5, 0.7)
+        love.graphics.rectangle("fill", x + settingsWidth - 10, scrollBarY, 8, scrollBarHeight)
+    end
+    
+    love.graphics.setColor(1, 1, 1)
+end
+
+-- Обработка касаний настроек
+function DebugLog.handleSettingsTouch(x, y)
+    local settingsWidth = 300
+    local settingsHeight = math.min(400, love.graphics.getHeight() * 0.7)
+    local settingsX = love.graphics.getWidth() - settingsWidth - 10
+    local settingsY = 10
+
+    -- Проверяем, было ли касание внутри окна настроек
+    if x < settingsX or x > settingsX + settingsWidth or
+       y < settingsY or y > settingsY + settingsHeight then
+        DebugLog.settingsVisible = false
+        return
+    end
+
+    -- Область контента с учетом скролла
+    local contentY = y - settingsY - 40 + (DebugLog.settingsScroll or 0)
+    
+    -- Обработка чекбоксов
+    local itemHeight = 30
+    local itemIndex = math.floor(contentY / itemHeight) + 1
+    
+    if itemIndex >= 1 and itemIndex <= #DebugLog.sortedSettings then
+        local name = DebugLog.sortedSettings[itemIndex]
+        DebugLog.settings[name] = not DebugLog.settings[name]
+        DebugLog.print(name .. " set to " .. tostring(DebugLog.settings[name]))
+    end
+end
+
+-- Обработка скролла настроек
+function DebugLog.handleSettingsScroll(dx, dy)
+    if not DebugLog.settingsVisible then return end
+    
+    local settingsHeight = math.min(400, love.graphics.getHeight() * 0.7)
+    local contentHeight = #DebugLog.sortedSettings * 30 + 20
+    local scrollAreaHeight = settingsHeight - 40
+    
+    DebugLog.settingsScroll = (DebugLog.settingsScroll or 0) - dy * 20
+    DebugLog.settingsScroll = math.max(0, math.min(contentHeight - scrollAreaHeight, DebugLog.settingsScroll))
+end
+
+
+
+return DebugLog
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/utils/debuglog.lua ====
+
+
+
+-- НАЧАЛО ФАЙЛА: /storage/emulated/0/lua/UlinT/src/world/map.lua ====
+
+local Map = {}
+
+function Map.draw()
+    love.graphics.setColor(0.15, 0.15, 0.15)
+    love.graphics.rectangle("fill", 0, 0, 2000, 2000) -- большая "земля"
+end
+
+return Map
+-- КОНЕЦ ФАЙЛА: /storage/emulated/0/lua/UlinT/src/world/map.lua ====
+
