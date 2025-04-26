@@ -1,6 +1,7 @@
 📁 /
     📄 structure.txt
     📄 main.lua
+    📄 .gitignore
     📄 conf.lua
     📄 merged_output.txt
 📁 src/

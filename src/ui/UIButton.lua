@@ -1,4 +1,3 @@
--- UIButton.lua
 local class = require("lib.middleclass")
 local UIElement = require("src.ui.UIElement")
 
@@ -17,30 +16,27 @@ end
 function UIButton:draw()
     if not self.visible then return end
     
-    -- Рисуем кнопку
     love.graphics.setColor(self.currentColor)
-    love.graphics.rectangle("fill", self.x, self.y, self.width, self.height, 5)
+    love.graphics.rectangle("fill", self._absX, self._absY, self.width, self.height, 5)
     
-    -- Рисуем текст
     love.graphics.setColor(self.textColor)
     local font = love.graphics.getFont()
     local textHeight = font and font:getHeight() or 12
-    love.graphics.printf(self.label, self.x, self.y + (self.height - textHeight)/2, self.width, "center")
+    love.graphics.printf(self.label, self._absX, self._absY + (self.height - textHeight)/2, self.width, "center")
 end
 
 function UIButton:touchpressed(id, x, y)
-    if self:isInside(x, y) then
-        self.currentColor = self.pressedColor
-        return true
-    end
-    return false
+    if not UIElement.touchpressed(self, id, x, y) then return false end
+    self.currentColor = self.pressedColor
+    return true
 end
 
 function UIButton:touchreleased(id, x, y)
     self.currentColor = self.color
-    if self:isInside(x, y) and self.onClick then
+    if self:isInside(x, y) then
         self.onClick()
     end
+    return UIElement.touchreleased(self, id, x, y)
 end
 
 return UIButton

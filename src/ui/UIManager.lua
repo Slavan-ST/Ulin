@@ -1,50 +1,47 @@
 local class = require("lib.middleclass")
-local UIElement = require "src.ui.UIElement"
-local UIManager = class("UIManager")
+local UIElement = require("src.ui.UIElement")
+
+local UIManager = class("UIManager", UIElement)
 
 function UIManager:initialize()
-    self.elements = {}         -- Все UI элементы
-    self.focusedElement = nil  -- Элемент в фокусе (кликнутый)
-    self.activeInputElement = nil -- Активный элемент ввода
-    self.hoveredElement = nil  -- Элемент под курсором/касанием
-    self.draggedElement = nil  -- Элемент в процессе перетаскивания
-    self.blockInput = false    -- Флаг блокировки ввода
+    UIElement.initialize(self, 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
+    self.blockInput = false
+    self.activeInputElement = nil
+    self.focusedElement = nil
+    self.hoveredElement = nil
+    self.draggedElement = nil
+    self.elements = {} -- Основной список элементов (дублирует self.children, но для совместимости)
 end
 
--- Добавление элемента с автоматической сортировкой по zIndex
+-- Добавление элемента с сортировкой
 function UIManager:add(element)
     if not element then return end
+    self:addChild(element) -- Используем родительский метод
     table.insert(self.elements, element)
     self:sortElements()
 end
 
--- Сортировка элементов по zIndex (от меньшего к большему)
-function UIManager:sortElements()
-    table.sort(self.elements, function(a, b)
-        return (a.zIndex or 0) < (b.zIndex or 0)
-    end)
-end
-
--- Удаление элемента и очистка ссылок на него
+-- Удаление элемента
 function UIManager:remove(element)
     if not element then return end
     
     for i, e in ipairs(self.elements) do
         if e == element then
             table.remove(self.elements, i)
+            self:removeChild(element) -- Нужно добавить этот метод в UIElement
             self:clearElementReferences(element)
             break
         end
     end
 end
 
--- Очистка всех ссылок на элемент
+-- Очистка ссылок на элемент
 function UIManager:clearElementReferences(element)
     if self.focusedElement == element then
         self.focusedElement = nil
     end
     if self.activeInputElement == element then
-        self:clearActiveInput()
+        self:setActiveInput(nil)
     end
     if self.hoveredElement == element then
         self:setHoveredElement(nil)
@@ -54,165 +51,60 @@ function UIManager:clearElementReferences(element)
     end
 end
 
--- Очистка активного элемента ввода
-function UIManager:clearActiveInput()
-    if self.activeInputElement and self.activeInputElement.setActive then
-        self.activeInputElement:setActive(false)
-    end
-    self.activeInputElement = nil
-    love.keyboard.setTextInput(false)
+-- Сортировка элементов по zIndex
+function UIManager:sortElements()
+    table.sort(self.elements, function(a, b)
+        return (a.zIndex or 0) < (b.zIndex or 0)
+    end)
+    self:sortChildren() -- Сортируем и дочерние элементы
 end
 
--- Установка hovered элемента с вызовом колбэков
+-- Установка активного элемента ввода
+function UIManager:setActiveInput(element)
+    if self.activeInputElement then
+        self.activeInputElement:setActive(false)
+    end
+    self.activeInputElement = element
+    if element then
+        element:setActive(true)
+        love.keyboard.setTextInput(true)
+    else
+        love.keyboard.setTextInput(false)
+    end
+end
+
+-- Установка hovered элемента
 function UIManager:setHoveredElement(element)
     if self.hoveredElement == element then return end
     
-    -- Уведомляем предыдущий элемент о потере hover
     if self.hoveredElement and self.hoveredElement.onHoverChanged then
         self.hoveredElement:onHoverChanged(false)
     end
     
     self.hoveredElement = element
     
-    -- Уведомляем новый элемент о получении hover
     if element and element.onHoverChanged then
         element:onHoverChanged(true)
     end
 end
 
--- Обновление всех элементов
-function UIManager:update(dt)
-    if self.blockInput then return end
-    
-    for i = #self.elements, 1, -1 do
-        local element = self.elements[i]
-        if element and element.visible ~= false and element.update then
-            element:update(dt)
-        end
-    end
-end
-
--- Отрисовка всех элементов в порядке zIndex
-function UIManager:draw()
-    for _, element in ipairs(self.elements) do
-        if element and element.visible ~= false and element.draw then
-            element:draw()
-        end
-    end
-end
-
--- Обработка нажатия (тач/клик)
--- src/ui/UIManager.lua
+-- Обработчики событий (переопределенные)
 function UIManager:touchpressed(id, x, y)
     if self.blockInput then return false end
     
-    -- Снимаем фокус ввода если клик был мимо активного элемента
-    if self.activeInputElement then
-        if not (self.activeInputElement.isInside and self.activeInputElement:isInside(x, y)) then
-            self:clearActiveInput()
-        end
+    if self.activeInputElement and not self.activeInputElement:isInside(x, y) then
+        self:setActiveInput(nil)
     end
 
     -- Обработка сверху вниз по zIndex
     for i = #self.elements, 1, -1 do
         local element = self.elements[i]
-        if element and element.visible ~= false then
-            -- Проверяем наличие метода isInside перед вызовом
-            local isInside = element.isInside and element:isInside(x, y)
-            if isInside and element.touchpressed then
-                if element:touchpressed(id, x, y) then
-                    self.focusedElement = element
-                    
-                    if element.draggable then
-                        self.draggedElement = element
-                    end
-                    
-                    if element.setActive then
-                        self:clearActiveInput()
-                        element:setActive(true)
-                        self.activeInputElement = element
-                        love.keyboard.setTextInput(true)
-                    end
-                    
-                    return true
+        if element and element.visible ~= false and element:isInside(x, y) and element.touchpressed then
+            if element:touchpressed(id, x, y) then
+                self.focusedElement = element
+                if element.draggable then
+                    self.draggedElement = element
                 end
-            end
-        end
-    end
-    
-    return false
-end
-
--- Обработка перемещения (тач/мышь)
-function UIManager:touchmoved(id, x, y, dx, dy)
-    if self.blockInput then return false end
-    
-    local handled = false
-    
-    -- В первую очередь - перетаскивание
-    if self.draggedElement and self.draggedElement.touchmoved then
-        handled = self.draggedElement:touchmoved(id, x, y, dx, dy)
-    end
-    
-    -- Обновление hover-эффектов
-    local newHovered = nil
-    for i = #self.elements, 1, -1 do
-        local element = self.elements[i]
-        if element and element.visible ~= false and element:isInside(x, y) then
-            newHovered = element
-            break  -- Берем верхний элемент
-        end
-    end
-    self:setHoveredElement(newHovered)
-    
-    -- Передаем событие hovered элементу
-    if self.hoveredElement and self.hoveredElement.touchmoved then
-        handled = handled or self.hoveredElement:touchmoved(id, x, y, dx, dy)
-    end
-    
-    return handled
-end
-
--- Обработка отпускания (тач/мышь)
-function UIManager:touchreleased(id, x, y)
-    if self.blockInput then return false end
-    
-    local handled = false
-    
-    -- Завершение перетаскивания
-    if self.draggedElement then
-        if self.draggedElement.touchreleased then
-            handled = self.draggedElement:touchreleased(id, x, y)
-        end
-        self.draggedElement = nil
-    end
-    
-    -- Клик по элементу
-    if self.focusedElement and self.focusedElement.touchreleased then
-        handled = handled or self.focusedElement:touchreleased(id, x, y)
-    end
-    
-    self.focusedElement = nil
-    
-    return handled
-end
-
--- Обработка нажатия клавиши
-function UIManager:keypressed(key)
-    if self.blockInput then return false end
-    
-    -- Сначала активному элементу ввода
-    if self.activeInputElement and self.activeInputElement.keypressed then
-        if self.activeInputElement:keypressed(key) then
-            return true
-        end
-    end
-    
-    -- Затем остальным элементам
-    for i = #self.elements, 1, -1 do
-        local element = self.elements[i]
-        if element and element.visible ~= false and element.keypressed then
-            if element:keypressed(key) then
                 return true
             end
         end
@@ -221,17 +113,67 @@ function UIManager:keypressed(key)
     return false
 end
 
--- Обработка текстового ввода
-function UIManager:textinput(text)
+function UIManager:touchmoved(id, x, y, dx, dy)
     if self.blockInput then return false end
     
+    -- Передаем событие в draggedElement (если есть)
+    if self.draggedElement and self.draggedElement.touchmoved then
+        return self.draggedElement:touchmoved(id, x, y, dx, dy)
+    end
+    
+    -- Обновляем hover состояние
+    local newHovered = nil
+    for i = #self.elements, 1, -1 do
+        local element = self.elements[i]
+        if element and element.visible ~= false and element:isInside(x, y) then
+            newHovered = element
+            break
+        end
+    end
+    self:setHoveredElement(newHovered)
+    
+    return false
+end
+
+
+
+function UIManager:touchreleased(id, x, y)
+    if self.blockInput then return false end
+    
+    -- Завершение перетаскивания
+    if self.draggedElement then
+        if self.draggedElement.touchreleased then
+            self.draggedElement:touchreleased(id, x, y)
+        end
+        self.draggedElement = nil
+    end
+    
+    -- Клик по элементу
+    if self.focusedElement and self.focusedElement.touchreleased then
+        return self.focusedElement:touchreleased(id, x, y)
+    end
+    
+    self.focusedElement = nil
+    return false
+end
+
+function UIManager:keypressed(key)
+    if self.blockInput then return false end
+    if self.activeInputElement and self.activeInputElement.keypressed then
+        return self.activeInputElement:keypressed(key)
+    end
+    return false
+end
+
+function UIManager:textinput(text)
+    if self.blockInput then return false end
     if self.activeInputElement and self.activeInputElement.textinput then
         return self.activeInputElement:textinput(text)
     end
     return false
 end
 
--- Блокировка/разблокировка ввода
+-- Блокировка ввода
 function UIManager:setInputBlocked(blocked)
     self.blockInput = blocked
 end
