@@ -38,7 +38,7 @@ function TestUI:setupTestUI()
         }
     }
     local UIInspectorPopup = require("src.ui.UIInspectorPopup")
-    local popup = UIInspectorPopup:new(200, 100, 350, 450, "player", style)
+    local popup = UIInspectorPopup:new(200, 100, 200, 280, "player", style)
     self.uiManager:add(popup)
     -- Добавляем кнопку в UI Manager
     self.uiManager:add(self.testButton)

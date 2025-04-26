@@ -62,7 +62,6 @@ end
 function UIElement:touchpressed(id, x, y)
     if not self:isInside(x, y) then return false end
     
-    -- Обработка перетаскивания
     if self.draggable then
         self.dragging = true
         self.dragStartX = x - self._absX
@@ -70,21 +69,10 @@ function UIElement:touchpressed(id, x, y)
         return true
     end
     
-    -- Обработка детей (сверху вниз по zIndex)
-    if self.children then
-        for i = #self.children, 1, -1 do
-            local child = self.children[i]
-            if child and child.touchpressed and child:touchpressed(id, x, y) then
-                return true
-            end
-        end
-    end
-    
-    return false
+    return self:propagateToChildren("touchpressed", id, x, y)
 end
 
 function UIElement:touchmoved(id, x, y, dx, dy)
-    -- Перетаскивание элемента
     if self.dragging and self.draggable then
         self.x = x - self.dragStartX - (self.parent and self.parent._absX or 0)
         self.y = y - self.dragStartY - (self.parent and self.parent._absY or 0)
@@ -92,32 +80,12 @@ function UIElement:touchmoved(id, x, y, dx, dy)
         return true
     end
     
-    -- Передача события детям
-    if self.children then
-        for i = #self.children, 1, -1 do
-            local child = self.children[i]
-            if child and child.touchmoved and child:touchmoved(id, x, y, dx, dy) then
-                return true
-            end
-        end
-    end
-    
-    return false
+    return self:propagateToChildren("touchmoved", id, x, y, dx, dy)
 end
 
 function UIElement:touchreleased(id, x, y)
     self.dragging = false
-    
-    if self.children then
-        for i = #self.children, 1, -1 do
-            local child = self.children[i]
-            if child and child.touchreleased and child:touchreleased(id, x, y) then
-                return true
-            end
-        end
-    end
-    
-    return false
+    return self:propagateToChildren("touchreleased", id, x, y)
 end
 
 -- Управление иерархией ===============================================
@@ -204,6 +172,22 @@ end
 
 function UIElement:onHoverChanged(hovered)
     self.hovered = hovered
+end
+
+function UIElement:propagateToChildren(methodName, ...)
+    if not self.children then return false end
+    
+    for i = #self.children, 1, -1 do
+        local child = self.children[i]
+        local method = child and child[methodName]
+        if method and type(method) == "function" then
+            if method(child, ...) then
+                return true
+            end
+        end
+    end
+    
+    return true
 end
 
 return UIElement

@@ -1,6 +1,7 @@
 local class = require("lib.middleclass")
 local UIElement = require("src.ui.UIElement")
 
+
 local UIButton = class("UIButton", UIElement)
 
 function UIButton:initialize(x, y, width, height, label, onClick)
