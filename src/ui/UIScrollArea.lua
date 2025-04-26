@@ -10,10 +10,6 @@ function UIScrollArea:initialize(x, y, width, height)
     self.contentHeight = height
     self.controls = {} -- Элементы для скролла
     self._isScrolling = false
-    self._touchId = nil -- Для отслеживания конкретного касания
-    self.scrollFriction = 0.95 -- Трение для плавности
-    self.scrollVelocity = 0
-    self.maxOverscroll = 50 -- Максимальное "перетягивание" за границы
 end
 
 function UIScrollArea:draw()
@@ -52,67 +48,22 @@ function UIScrollArea:touchpressed(id, x, y)
     
     -- Начинаем скроллинг
     self._isScrolling = true
-    self._touchId = id
-    self.scrollVelocity = 0 -- Сбрасываем скорость при новом касании
     return true
 end
 
 function UIScrollArea:touchmoved(id, x, y, dx, dy)
-    if self._isScrolling and self._touchId == id then
-        self.scrollVelocity = -dy -- Запоминаем скорость для инерции
-        
+    if self._isScrolling then
         local newScrollY = self.scrollY - dy
-        
-        -- Ограничиваем скролл с возможностью небольшого "перетягивания"
-        local maxScroll = self.contentHeight - self.height
-        if maxScroll > 0 then
-            if newScrollY < -self.maxOverscroll then
-                newScrollY = -self.maxOverscroll + (newScrollY + self.maxOverscroll) * 0.2
-            elseif newScrollY > maxScroll + self.maxOverscroll then
-                newScrollY = maxScroll + self.maxOverscroll + (newScrollY - maxScroll - self.maxOverscroll) * 0.2
-            end
-        else
-            newScrollY = 0 -- Если контент меньше области, не скроллим
-        end
-        
-        self.scrollY = newScrollY
+        self.scrollY = math.max(0, math.min(newScrollY, self.contentHeight - self.height))
         return true
     end
     return false
 end
 
-function UIScrollArea:touchreleased(id, x, y)
-    if self._touchId == id then
-        self._isScrolling = false
-        self._touchId = nil
-    end
-    return false
-end
 
-function UIScrollArea:update(dt)
-    -- Применяем инерцию, если не скроллим вручную
-    if not self._isScrolling and math.abs(self.scrollVelocity) > 0.1 then
-        self.scrollVelocity = self.scrollVelocity * self.scrollFriction
-        local newScrollY = self.scrollY + self.scrollVelocity
-    
-        local maxScroll = math.max(0, self.contentHeight - self.height)
-        
-        -- Если вышли за границы, уменьшаем скорость
-        if newScrollY < 0 or newScrollY > maxScroll then
-            self.scrollVelocity = self.scrollVelocity * 0.6
-        end
-        
-        -- Ограничиваем скролл
-        if newScrollY < 0 then
-            newScrollY = 0
-            self.scrollVelocity = 0
-        elseif newScrollY > maxScroll then
-            newScrollY = maxScroll
-            self.scrollVelocity = 0
-        end
-        
-        self.scrollY = newScrollY
-    end
+function UIScrollArea:touchreleased(id, x, y)
+    self._isScrolling = false
+    return false
 end
 
 function UIScrollArea:updateContentHeight()
