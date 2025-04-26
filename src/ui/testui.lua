@@ -3,17 +3,19 @@ local class = require("lib.middleclass")
 local UIManager = require("src.ui.UIManager")
 local DebugConsole = require("src.ui.DebugConsole")
 local UIButton = require("src.ui.UIButton")
+local UIInspectorPopup = require("src.ui.UIInspectorPopup")
 
 local TestUI = class("TestUI")
 
 function TestUI:initialize()
     self.uiManager = UIManager:new()
+    DebugConsole:initialize(self.uiManager) -- Передаем менеджер в консоль
     self:setupTestUI()
     DebugConsole:printLog("TestUI initialized")
 end
 
 function TestUI:setupTestUI()
-    -- Создаем тестовую кнопку с использованием UIButton
+    -- Создаем тестовую кнопку с высоким zIndex (чтобы была поверх)
     self.testButton = UIButton:new(
         200, 200, 200, 60, 
         "Test Button",
@@ -21,13 +23,13 @@ function TestUI:setupTestUI()
             DebugConsole:printLog("Button pressed!") 
         end
     )
-    
-    -- Настраиваем цвета кнопки
     self.testButton.color = {0.3, 0.6, 0.8}
     self.testButton.pressedColor = {0.8, 0.3, 0.3}
     
+    -- Добавляем с явным указанием zIndex
+    self.uiManager:add(self.testButton, 1000)
     
-    
+    -- Попап с меньшим zIndex (будет под кнопкой)
     local style = {
         bg = {0.1, 0.1, 0.15, 0.95},
         text = {0.9, 0.9, 0.9},
@@ -37,11 +39,8 @@ function TestUI:setupTestUI()
             hover = {0.3, 0.3, 0.4, 0.9}
         }
     }
-    local UIInspectorPopup = require("src.ui.UIInspectorPopup")
     local popup = UIInspectorPopup:new(200, 100, 200, 280, "player", style)
-    self.uiManager:add(popup)
-    -- Добавляем кнопку в UI Manager
-    self.uiManager:add(self.testButton)
+    self.uiManager:add(popup, 500) -- Средний zIndex
 end
 
 function TestUI:load()

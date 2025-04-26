@@ -9,56 +9,45 @@ function UIElement:initialize(x, y, width, height)
     self.width = width or 100
     self.height = height or 50
     self.visible = true
-    self.zIndex = 0
     
     -- Иерархия элементов
-    self.children = {}  -- Гарантированная инициализация
+    self.children = {}
     self.parent = nil
     
     -- Абсолютные координаты
     self._absX = x or 0
     self._absY = y or 0
     
-    -- Перетаскивание
+    -- Состояние элемента
     self.draggable = false
     self.dragging = false
     self.dragStartX = 0
     self.dragStartY = 0
-    
-    -- Состояние
     self.active = false
     self.hovered = false
 end
 
--- Основные методы =====================================================
-
+-- Основные методы ----------------------------------------------------
 function UIElement:update(dt)
-    if not self.children then return end
-    
     for _, child in ipairs(self.children) do
-        if child and child.update then 
-            child:update(dt) 
-        end
+        if child.update then child:update(dt) end
     end
 end
 
 function UIElement:draw()
-    if not self.visible or not self.children then return end
+    if not self.visible then return end
     
     love.graphics.push("all")
     love.graphics.translate(self.x, self.y)
     
     for _, child in ipairs(self.children) do
-        if child and child.draw then 
-            child:draw() 
-        end
+        if child.draw then child:draw() end
     end
     
     love.graphics.pop()
 end
 
--- Обработка ввода ====================================================
-
+-- Обработка ввода ---------------------------------------------------
 function UIElement:touchpressed(id, x, y)
     if not self:isInside(x, y) then return false end
     
@@ -73,7 +62,7 @@ function UIElement:touchpressed(id, x, y)
 end
 
 function UIElement:touchmoved(id, x, y, dx, dy)
-    if self.dragging and self.draggable then
+    if self.dragging then
         self.x = x - self.dragStartX - (self.parent and self.parent._absX or 0)
         self.y = y - self.dragStartY - (self.parent and self.parent._absY or 0)
         self:updateAbsolutePosition()
@@ -88,28 +77,16 @@ function UIElement:touchreleased(id, x, y)
     return self:propagateToChildren("touchreleased", id, x, y)
 end
 
--- Управление иерархией ===============================================
-
+-- Управление иерархией ----------------------------------------------
 function UIElement:addChild(child)
-    if not child then return false end
-    
-    -- Гарантируем инициализацию
-    self.children = self.children or {}
-    
-    -- Устанавливаем связь
+    if not self.children then self.children = {} end
     child.parent = self
     table.insert(self.children, child)
-    
-    -- Обновляем zIndex и позицию
-    self:sortChildren()
     child:updateAbsolutePosition(self._absX, self._absY)
-    
     return true
 end
 
 function UIElement:removeChild(child)
-    if not child or not self.children then return false end
-    
     for i, c in ipairs(self.children) do
         if c == child then
             child.parent = nil
@@ -117,20 +94,10 @@ function UIElement:removeChild(child)
             return true
         end
     end
-    
     return false
 end
 
-function UIElement:sortChildren()
-    if not self.children then return end
-    
-    table.sort(self.children, function(a, b)
-        return (a.zIndex or 0) < (b.zIndex or 0)
-    end)
-end
-
--- Координаты и трансформации =========================================
-
+-- Координаты --------------------------------------------------------
 function UIElement:updateAbsolutePosition(parentX, parentY)
     parentX = parentX or 0
     parentY = parentY or 0
@@ -138,56 +105,38 @@ function UIElement:updateAbsolutePosition(parentX, parentY)
     self._absX = parentX + self.x
     self._absY = parentY + self.y
     
-    -- Рекурсивное обновление детей
-    if self.children then
-        for _, child in ipairs(self.children) do
-            if child and child.updateAbsolutePosition then
-                child:updateAbsolutePosition(self._absX, self._absY)
-            end
+    for _, child in ipairs(self.children) do
+        if child.updateAbsolutePosition then
+            child:updateAbsolutePosition(self._absX, self._absY)
         end
     end
 end
 
 function UIElement:isInside(x, y)
-    return self.visible and  x >= self._absX and x <= self._absX + self.width and
+    return x >= self._absX and x <= self._absX + self.width and
            y >= self._absY and y <= self._absY + self.height
 end
 
--- Утилиты ============================================================
+-- Утилиты -----------------------------------------------------------
+function UIElement:propagateToChildren(methodName, ...)
+    for i = #self.children, 1, -1 do
+        local child = self.children[i]
+        if child[methodName] and child[methodName](child, ...) then
+            return true
+        end
+    end
+    return false
+end
 
 function UIElement:withScissor(fn)
-    if not fn then return end
-    
     love.graphics.push("all")
     love.graphics.setScissor(self._absX, self._absY, self.width, self.height)
     fn()
     love.graphics.pop()
 end
 
--- Состояние элемента =================================================
-
-function UIElement:setActive(active)
-    self.active = active
-end
-
-function UIElement:onHoverChanged(hovered)
-    self.hovered = hovered
-end
-
-function UIElement:propagateToChildren(methodName, ...)
-    if not self.children then return false end
-    
-    for i = #self.children, 1, -1 do
-        local child = self.children[i]
-        local method = child and child[methodName]
-        if method and type(method) == "function" then
-            if method(child, ...) then
-                return true
-            end
-        end
-    end
-    
-    return true
-end
+-- Состояние элемента ------------------------------------------------
+function UIElement:setActive(active) self.active = active end
+function UIElement:onHoverChanged(hovered) self.hovered = hovered end
 
 return UIElement

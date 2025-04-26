@@ -28,7 +28,7 @@ local commandHistory = {}
 local currentCommand = ""
 local isVisible = false
 local inputFocus = false
-local uiManager = UIManager:new()
+
 
 -- В начало файла (после других local переменных)
 local closeButton = {
@@ -49,12 +49,24 @@ local closeButton = {
     end
 }
 
-function DebugConsole:initialize()
-    if instance then
-        return instance
-    end
+-- Вместо локального uiManager используйте глобальный из TestUI
+local uiManager = nil
+
+function DebugConsole:initialize(testUIManager)
+    if instance then return instance end
+    
+    uiManager = testUIManager -- Используем существующий UIManager
     instance = self
     return self
+end
+
+-- В функции registerDebugObject:
+function DebugConsole.registerDebugObject(obj, name)
+    name = name or "obj_"..#debugObjects+1
+    local popup = UIInspectorPopup:new(200, 100, 350, 450, name, obj)
+    uiManager:add(popup, 2000) -- Высокий zIndex для попапов дебага
+    table.insert(debugObjects, {obj = obj, popup = popup})
+    return popup
 end
 
 function DebugConsole.printLog(message)
@@ -62,14 +74,6 @@ function DebugConsole.printLog(message)
     if #debugLogs > 100 then
         table.remove(debugLogs, 1)
     end
-end
-
-function DebugConsole.registerDebugObject(obj, name)
-    name = name or "obj_"..#debugObjects+1
-    local popup = UIInspectorPopup:new(200, 100, 350, 450, name, obj)
-    uiManager:add(popup)
-    table.insert(debugObjects, {obj = obj, popup = popup})
-    return popup
 end
 
 function DebugConsole.update(dt)
@@ -179,6 +183,13 @@ function DebugConsole.processKeyPress(key)
     end
     
     return false
+end
+
+function DebugConsole.toggleVisibility()
+    isVisible = not isVisible
+    if isVisible and uiManager then
+        uiManager:bringToFront(closeButton)
+    end
 end
 -- Возвращаем сам класс, а не экземпляр
 return DebugConsole
