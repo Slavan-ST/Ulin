@@ -36,6 +36,8 @@ end
 function UIButton:touchpressed(id, x, y)
     if not self:isInside(x, y) then return false end
     
+    UIElement.touchpressed(self, id, x, y)
+    
     self.isPressed = true
     self.currentColor = self.pressedColor
     return true  -- Возвращаем true, чтобы показать, что событие обработано
@@ -43,6 +45,7 @@ end
 
 function UIButton:touchmoved(id, x, y, dx, dy)
     if self.isPressed then
+        UIElement.touchmoved(self, id, x, y)
         -- Если кнопка была нажата, проверяем остались ли мы внутри
         if not self:isInside(x, y) then
             self.isPressed = false

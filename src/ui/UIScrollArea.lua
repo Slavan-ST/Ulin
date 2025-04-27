@@ -8,109 +8,143 @@ function UIScrollArea:initialize(x, y, width, height, borderPadding)
     self.scrollY = 0
     self.scrollSpeed = 20
     self.contentHeight = height
-    self.controls = {} -- Элементы для скролла
+    self.controls = {}
     self._isScrolling = false
-    self.borderPadding = borderPadding or 10  -- Отступ по умолчанию 10
+    self.borderPadding = borderPadding or 10
+    self.scrollBarWidth = 8
+    self.scrollBarPadding = 2
+    self.scrollBarColor = {0.6, 0.6, 0.6, 0.8}
+    self.scrollBarActiveColor = {0.7, 0.7, 0.7, 1}
+    self._scrollBarVisible = false
+    self._scrollBarDragging = false
+    self._scrollBarDragStartY = 0
+    self._scrollBarDragStartScroll = 0
+end
+
+function UIScrollArea:clearControls()
+    self.controls = {}
+    self.scrollY = 0
+    self:updateContentHeight()
+end
+
+function UIScrollArea:withScissor(func)
+    love.graphics.setScissor(self._absX, self._absY, self.width, self.height)
+    func()
+    love.graphics.setScissor()
 end
 
 function UIScrollArea:draw()
-    -- Отрисовка основной области прокрутки
-    love.graphics.setColor(0.9, 0.9, 0.9)  -- Светлый серый цвет для основной области
+    -- Draw background
+    love.graphics.setColor(0.15, 0.15, 0.2, 0.8)
     love.graphics.rectangle("fill", self._absX, self._absY, self.width, self.height)
 
-    -- Отрисовка контейнера для элементов
-    love.graphics.setColor(0.5, 0.5, 0.5)  -- Более темный цвет для контейнера
-    love.graphics.rectangle("fill", self._absX + self.borderPadding, self._absY + self.borderPadding, 
-                            self.width - 2 * self.borderPadding, self.height - 2 * self.borderPadding)
-    
-    -- Отрисовка элементов внутри контейнера
+    -- Draw content with scissor
     self:withScissor(function()
         love.graphics.push()
+        love.graphics.translate(0, -self.scrollY)
 
-        -- Прокачиваем всю область прокрутки
-        love.graphics.translate(0, -self.scrollY)  -- Прокачиваем все элементы в соответствии с прокруткой
-
-        -- Отрисовка детей
-        UIElement.draw(self)
-
-        -- Отрисовка элементов внутри контейнера
+        -- Draw controls
         for _, control in ipairs(self.controls) do
-            love.graphics.push()
-
-            -- Прокачиваем координаты каждого элемента в пределах UIScrollArea
-            love.graphics.translate(self._absX + control.x, self._absY + control.y - self.scrollY)
-
             if control.draw then
+                love.graphics.push()
+                love.graphics.translate(self._absX + control.x, self._absY + control.y)
                 control:draw()
+                love.graphics.pop()
             end
-
-            love.graphics.pop()
         end
-        
+
         love.graphics.pop()
     end)
-end
 
-function UIScrollArea:touchreleased(id, x, y)
-    self._isScrolling = false
-    return false
+    -- Draw scrollbar if needed
+    if self._scrollBarVisible then
+        local scrollBarHeight = math.max(20, self.height * (self.height / self.contentHeight))
+        local scrollBarPos = (self.scrollY / (self.contentHeight - self.height)) * (self.height - scrollBarHeight)
+        
+        love.graphics.setColor(self._scrollBarDragging and self.scrollBarActiveColor or self.scrollBarColor)
+        love.graphics.rectangle(
+            "fill",
+            self._absX + self.width - self.scrollBarWidth - self.scrollBarPadding,
+            self._absY + scrollBarPos + self.scrollBarPadding,
+            self.scrollBarWidth,
+            scrollBarHeight - 2 * self.scrollBarPadding,
+            4
+        )
+    end
 end
 
 function UIScrollArea:touchpressed(id, x, y)
     local localX = x - self._absX
-    local localY = y - self._absY + self.scrollY  -- Добавляем scrollY
+    local localY = y - self._absY
 
-    -- Проверяем клик по элементам с учётом отступов
+    -- Check scrollbar click first
+    if self._scrollBarVisible and localX > self.width - self.scrollBarWidth - 2 * self.scrollBarPadding then
+        self._scrollBarDragging = true
+        self._scrollBarDragStartY = y
+        self._scrollBarDragStartScroll = self.scrollY
+        return true
+    end
+
+    -- Check controls
     for i = #self.controls, 1, -1 do
         local control = self.controls[i]
-        -- Уменьшаем размеры контролов для предотвращения перехвата в области отступов
-        local adjustedWidth = control.width - 2 * self.borderPadding
-        local adjustedHeight = control.height - 2 * self.borderPadding
-        local adjustedX = control.x + self.borderPadding
-        local adjustedY = control.y + self.borderPadding - self.scrollY  -- Корректируем Y-координату
-
-        if control and control.isInside and control:isInside(localX, localY) then
-            if localX >= adjustedX and localX <= adjustedX + adjustedWidth and 
-               localY >= adjustedY and localY <= adjustedY + adjustedHeight then
-                if control.touchpressed then
-                    return control:touchpressed(id, localX, localY)
-                end
+        local controlX = self._absX + control.x
+        local controlY = self._absY + control.y - self.scrollY
+        
+        if control.isInside and control:isInside(x - controlX, y - controlY) then
+            if control.touchpressed then
+                return control:touchpressed(id, x - controlX, y - controlY)
             end
         end
     end
-    
-    -- Начинаем скроллинг, если не было нажатия на элемент
+
+    -- Start scrolling if nothing else was clicked
     self._isScrolling = true
     return true
 end
 
 function UIScrollArea:touchmoved(id, x, y, dx, dy)
-    if self._isScrolling then
-        local newScrollY = self.scrollY - dy
-        -- Ограничиваем прокрутку с учётом высоты контента
-        self.scrollY = math.max(0, math.min(newScrollY, self.contentHeight - self.height))
+    if self._scrollBarDragging then
+        local deltaY = y - self._scrollBarDragStartY
+        local scrollRatio = deltaY / (self.height - (self.height * (self.height / self.contentHeight)))
+        self.scrollY = math.max(0, math.min(
+            self._scrollBarDragStartScroll + scrollRatio * (self.contentHeight - self.height),
+            self.contentHeight - self.height
+        ))
+        return true
+    elseif self._isScrolling then
+        self.scrollY = math.max(0, math.min(self.scrollY - dy, self.contentHeight - self.height))
         return true
     end
     return false
 end
 
+function UIScrollArea:touchreleased(id, x, y)
+    self._isScrolling = false
+    self._scrollBarDragging = false
+    
+    -- Notify controls if needed
+    for _, control in ipairs(self.controls) do
+        if control.touchreleased then
+            control:touchreleased(id, x - self._absX - control.x, y - self._absY - control.y + self.scrollY)
+        end
+    end
+    
+    return true
+end
+
 function UIScrollArea:updateContentHeight()
     local maxY = 0
-    -- Обновляем высоту контента в зависимости от высоты элементов
     for _, control in ipairs(self.controls) do
-        local bottom = control.y + control.height
-        if bottom > maxY then maxY = bottom end
+        maxY = math.max(maxY, control.y + control.height)
     end
     self.contentHeight = math.max(maxY, self.height)
+    self._scrollBarVisible = self.contentHeight > self.height
 end
 
 function UIScrollArea:addControl(control)
-    -- Добавляем контрол в список дочерних элементов
     table.insert(self.controls, control)
-
-    -- Задаём локальные координаты элемента относительно UIScrollArea
-    control.x = control.x - self._absX
-    control.y = control.y - self._absY
+    self:updateContentHeight()
 end
 
 return UIScrollArea

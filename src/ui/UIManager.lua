@@ -17,6 +17,7 @@ function UIManager:initialize()
     self._elements = {}
     self._nextZIndex = 1
     self._defaultZIndex = 1000
+    self._needsSort = true -- Флаг необходимости сортировки
 end
 
 -- Управление элементами ---------------------------------------------
@@ -31,8 +32,8 @@ function UIManager:add(element, zIndex)
     self:addChild(element)
     table.insert(self._elements, element)
     
-    -- Сортируем
-    self:sortElements()
+    -- Помечаем необходимость сортировки
+    self._needsSort = true
     return element
 end
 
@@ -58,15 +59,17 @@ end
 
 -- Управление zIndex -------------------------------------------------
 function UIManager:sortElements()
+    if not self._needsSort then return end
     table.sort(self._elements, function(a, b)
         return (a._zIndex or 0) < (b._zIndex or 0)
     end)
+    self._needsSort = false
 end
 
 function UIManager:setZIndex(element, zIndex)
     if not element then return end
     element._zIndex = zIndex
-    self:sortElements()
+    self._needsSort = true
 end
 
 function UIManager:bringToFront(element)
@@ -80,7 +83,7 @@ function UIManager:bringToFront(element)
     end
     
     element._zIndex = max + 1
-    self:sortElements()
+    self._needsSort = true
 end
 
 function UIManager:sendToBack(element)
@@ -94,7 +97,21 @@ function UIManager:sendToBack(element)
     end
     
     element._zIndex = (min or 1) - 1
+    self._needsSort = true
+end
+
+-- Отрисовка элементов -----------------------------------------------
+function UIManager:draw()
+    -- Сортируем элементы если нужно
     self:sortElements()
+    
+    -- Отрисовываем в порядке zIndex (от меньшего к большему)
+    for i = 1, #self._elements do
+        local element = self._elements[i]
+        if element.visible and element.draw then
+            element:draw()
+        end
+    end
 end
 
 -- Управление вводом -------------------------------------------------
@@ -219,6 +236,35 @@ function UIManager:setInputBlocked(blocked)
         self.draggedElement = nil
         self.focusedElement = nil
     end
+end
+
+-- Дополнительные методы ---------------------------------------------
+function UIManager:getNextZIndex()
+    local max = 0
+    for _, element in ipairs(self._elements) do
+        if element._zIndex and element._zIndex > max then
+            max = element._zIndex
+        end
+    end
+    return max + 1
+end
+
+function UIManager:getElementsAtZIndex(zIndex)
+    local result = {}
+    for _, element in ipairs(self._elements) do
+        if element._zIndex == zIndex then
+            table.insert(result, element)
+        end
+    end
+    return result
+end
+
+function UIManager:lockZOrder()
+    self._needsSort = false
+end
+
+function UIManager:unlockZOrder()
+    self._needsSort = true
 end
 
 return UIManager
