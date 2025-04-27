@@ -128,9 +128,13 @@ function UIElement:propagateToChildren(methodName, ...)
     return false
 end
 
-function UIElement:withScissor(fn)
+function UIElement:withScissor(fn, padding)
+    if not padding then
+      padding = 0
+    end
+    
     love.graphics.push("all")
-    love.graphics.setScissor(self._absX, self._absY, self.width, self.height)
+    love.graphics.setScissor(self._absX, self._absY, self.width - padding, self.height)
     fn()
     love.graphics.pop()
 end

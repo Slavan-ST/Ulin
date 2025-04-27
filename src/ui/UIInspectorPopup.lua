@@ -9,7 +9,7 @@ function UIInspectorPopup:initialize(x, y, w, h, title, target, style)
     UIPopup.initialize(self, x, y, w, h, title)
     self.target = target
     self.style = style or {
-        bg = {0.1, 0.1, 0.2, 0.9},
+        bg = {0.7, 0.7, 0.7, 0.9},
         header = {0.2, 0.2, 0.3, 1},
         text = {1, 1, 1, 1},
         closeButton = {0.9, 0.2, 0.2, 1}
@@ -35,7 +35,6 @@ function UIInspectorPopup:initCloseButton()
         function()
             require("src.ui.DebugConsole").printLog("bt close")
             self.visible = false 
-            --self:draw()
         end
     )
     
@@ -49,6 +48,7 @@ function UIInspectorPopup:initCloseButton()
 end
 
 function UIInspectorPopup:initScrollArea()
+    -- Устанавливаем начало области прокрутки ниже заголовка (на 35 пикселей)
     self.scrollArea = UIScrollArea:new(
         5,  -- x
         35, -- y (ниже заголовка)
@@ -59,6 +59,41 @@ function UIInspectorPopup:initScrollArea()
     self.scrollArea.zIndex = self.zIndex
     self.scrollArea.draggable = false
     self:addChild(self.scrollArea)
+end
+
+function UIInspectorPopup:draw()
+    if not self.visible then return end
+    
+    love.graphics.push("all")
+    love.graphics.translate(self.x, self.y)
+    
+    -- Фон
+    love.graphics.setColor(self.style.bg)
+    love.graphics.rectangle("fill", 0, 0, self.width, self.height, 5)
+    
+    -- Заголовок
+    self:drawHeader()
+    
+    -- Отрисовка скролл-области ниже заголовка
+    love.graphics.setColor(0.15, 0.15, 0.2, 0.8)
+    love.graphics.rectangle("fill", 
+        self.scrollArea.x, 
+        self.scrollArea.y, 
+        self.scrollArea.width, 
+        self.scrollArea.height
+    )
+    
+    -- Отображаем элементы внутри области прокрутки
+    for _, item in ipairs(self.scrollArea.controls) do
+        if item.draw then
+            item:draw()
+        end
+    end
+    
+    -- Кнопка закрытия (рисуется последней, чтобы быть поверх всего)
+    love.graphics.pop()
+    self.closeButton:draw()
+    self.scrollArea:draw()
 end
 
 function UIInspectorPopup:updateAbsolutePosition(parentX, parentY)
@@ -83,7 +118,7 @@ function UIInspectorPopup:updateAbsolutePosition(parentX, parentY)
     -- Обновляем остальные дочерние элементы
     for _, child in ipairs(self.children) do
         if child ~= self.closeButton and child ~= self.scrollArea and child.updateAbsolutePosition then
-            child:updateAbsolutePosition(self._absX, self._absY)
+            child:updateAbsolutePosition(self._absX, self._absY + 35)
         end
     end
 end
@@ -107,7 +142,9 @@ function UIInspectorPopup:populateScrollArea()
     end
     
     addProperties(self.target, nil, 0)
-    self.scrollArea:updateContentHeight(yPos + 10)
+    
+    -- После добавления всех элементов обновляем высоту контента
+    self.scrollArea:updateContentHeight()
 end
 
 function UIInspectorPopup:addPropertyItem(key, value, yPos, indent)
@@ -130,7 +167,7 @@ function UIInspectorPopup:addPropertyItem(key, value, yPos, indent)
         draggable = false
     }
     
-    table.insert(self.scrollArea.controls, propItem)
+    self.scrollArea:addControl(propItem)
 end
 
 function UIInspectorPopup:drawHeader()
@@ -156,25 +193,12 @@ function UIInspectorPopup:draw()
     self:drawHeader()
     
     -- Отрисовка скролл-области
-    self.scrollArea:withScissor(function()
-        love.graphics.setColor(0.15, 0.15, 0.2, 0.8)
-        love.graphics.rectangle("fill", 
-            self.scrollArea.x, 
-            self.scrollArea.y, 
-            self.scrollArea.width, 
-            self.scrollArea.height
-        )
-        
-        for _, item in ipairs(self.scrollArea.controls) do
-            if item.draw then item:draw() end
-        end
-    end)
+    
     
     -- Кнопка закрытия (рисуется последней, чтобы быть поверх всего)
     love.graphics.pop()
     self.closeButton:draw()
-    
-    
+    self.scrollArea:draw()
 end
 
 function UIInspectorPopup:touchpressed(id, x, y)
@@ -195,7 +219,7 @@ function UIInspectorPopup:touchpressed(id, x, y)
         return UIPopup.touchpressed(self, id, x, y)
     end
     
-    -- 3. Проверяем скролл-область (только если не начали перетаскивание)
+    -- 3. Проверяем скролл-область (не мешаем другим действиям)
     if not self.dragging and self.scrollArea:isInside(localX, localY) then
         local scrollX = localX - self.scrollArea.x
         local scrollY = localY - self.scrollArea.y + (self.scrollArea.scrollY or 0)
@@ -230,9 +254,7 @@ function UIInspectorPopup:touchreleased(id, x, y)
     local localX, localY = x - self.x, y - self.y
     
     -- Обрабатываем кнопку закрытия
-    
     self.closeButton:touchreleased(id, x, y)
-    
     
     -- Обрабатываем скролл-область
     if self.scrollArea:isInside(localX, localY) then
